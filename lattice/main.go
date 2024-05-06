@@ -31,6 +31,7 @@ func main() {
 	A := Setup(uniformSampler)
 
 	// Gen
+	shares, seeds := Gen(r, A, uniformSampler, gaussianSampler)
 
 	// Sign
 	// message := "Hello, Threshold Signature!"
