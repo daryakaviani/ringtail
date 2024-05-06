@@ -60,7 +60,7 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 }
 
 // Function to generate the secret-shared polynomials
-func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, gaussianSampler *ring.GaussianSampler) ([]*ring.Poly, [][]byte) {
+func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, gaussianSampler *ring.GaussianSampler) ([]*ring.Poly, [][][]byte) {
 	// Sample the secret key from the ring
 	s := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
@@ -120,12 +120,12 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, g
 	}
 
 	// Produce secret-shared elements
-	shares := make([]*ring.Poly, k)
+	secretKeyShares := make([]*ring.Poly, k)
 	for l := 0; l < k; l++ {
 		for i := 0; i < n; i++ {
 			ringElem := r.NewPoly()
 			r.SetCoefficientsBigint(sharesCoeffs[l][i], ringElem)
-			shares[l] = &ringElem
+			secretKeyShares[l] = &ringElem
 		}
 	}
 
@@ -138,7 +138,7 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, g
 		}
 	}
 
-	return shares, seeds
+	return secretKeyShares, seeds
 }
 
 func generateRandomSeed() []byte {
