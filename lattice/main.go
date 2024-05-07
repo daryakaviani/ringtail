@@ -46,14 +46,17 @@ func main() {
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	numActiveParties := 4
-	D := make([]*ring.Poly, numActiveParties)
-	m := make([]*ring.Poly, numActiveParties)
+	D := make([]*[][]*ring.Poly, numActiveParties)
+	m := make([][]*ring.Poly, numActiveParties)
 	PRFKey := "PRF Key"
 	T := []int{1, 2, 3, 4}
 
 	for i := 0; i < numActiveParties; i++ {
-		D[i], m[i] = SignRound1(r, uniformSampler, i, sid, skShares[i], mu, []byte(PRFKey), seeds[i], T)
+		D[i], m[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[i], mu, []byte(PRFKey), seeds[i], T)
 	}
+
+	fmt.Println("D: ", D)
+	fmt.Println("m: ", m)
 
 	// Testing signing round 2 by simulating each of the parties
 	c := make([]*ring.Poly, numActiveParties)
@@ -174,9 +177,9 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 	skShares := make([]*ring.Poly, k)
 	for l := 0; l < k; l++ {
 		for i := 0; i < n; i++ {
-			ringElem := r.NewPoly()
-			r.SetCoefficientsBigint(sharesCoeffs[l][i], ringElem)
-			skShares[l] = &ringElem
+			elem := r.NewPoly()
+			r.SetCoefficientsBigint(sharesCoeffs[l][i], elem)
+			skShares[l] = &elem
 		}
 	}
 
@@ -204,9 +207,14 @@ func generateRandomSeed() []byte {
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, partyInt int, sid int, skShare *ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*ring.Poly, *ring.Poly) {
+func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare *ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly) {
 	// Generate the row-wise mask from PRFs
 	m_i := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		newPoly := r.NewPoly()
+		m_i[i] = &newPoly
+	}
+
 	for _, j := range T {
 		sd_ij := seeds_i[j]
 		m_ij := PRF(r, sid, sd_ij, PRFKey)
@@ -249,11 +257,68 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, partyInt int,
 		e_star[i] = &element
 	}
 
-	return nil, nil
+	// Sample the R_i matrix
+	R_i := make([][]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		R_i[i] = make([]*ring.Poly, d-1)
+		for j := 0; j < d-1; j++ {
+			element := uniformSampler.ReadNew()
+			R_i[i][j] = &element
+		}
+	}
+
+	// Sample the E_i matrix
+	gaussianParams = ring.DiscreteGaussian{}
+	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	E_i := make([][]*ring.Poly, m)
+	for i := 0; i < m; i++ {
+		E_i[i] = make([]*ring.Poly, d-1)
+		for j := 0; j < d-1; j++ {
+			element := gaussianSampler.ReadNew()
+			E_i[i][j] = &element
+		}
+	}
+
+	// Compute D_i here
+	// Initialize D_i as m x d matrix of polynomials
+	D_i := make([][]*ring.Poly, m)
+	for i := range D_i {
+		D_i[i] = make([]*ring.Poly, d)
+		for j := range D_i[i] {
+			newPoly := r.NewPoly()
+			D_i[i][j] = &newPoly
+		}
+	}
+
+	// Concatenate r_i_star with R_i, and e_i_star with E_i
+	concatenatedR := make([][]*ring.Poly, n)
+	concatenatedE := make([][]*ring.Poly, m)
+	for i := 0; i < n; i++ {
+		concatenatedR[i] = append([]*ring.Poly{r_star[i]}, R_i[i]...)
+	}
+	for i := 0; i < m; i++ {
+		concatenatedE[i] = append([]*ring.Poly{e_star[i]}, E_i[i]...)
+	}
+
+	// Compute D_i = A(concatenatedR) + concatenatedE
+	for i := 0; i < m; i++ {
+		for j := 0; j < d; j++ {
+			newPoly := r.NewPoly()
+
+			for k := 0; k < len(concatenatedR); k++ {
+				// Multiply A[i][k] with concatenatedR[k][j] and accumulate in tempPoly
+				r.MulCoeffsMontgomeryThenAdd(*(*A)[i][k], *concatenatedR[k][j], newPoly)
+			}
+			// Add the result of A * concatenatedR with concatenatedE
+			r.Add(newPoly, *concatenatedE[i][j], *D_i[i][j])
+		}
+	}
+
+	return &D_i, m_i
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(partyInt int, D []*ring.Poly, m []*ring.Poly) (c_i *ring.Poly, z_i *ring.Poly) {
+func SignRound2(partyInt int, D []*[][]*ring.Poly, m [][]*ring.Poly) (c_i *ring.Poly, z_i *ring.Poly) {
 	return nil, nil
 }
 
