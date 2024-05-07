@@ -46,12 +46,13 @@ func main() {
 	// Test signing round 1 by simulating each of the parties
 	mu := "Hello, Threshold Signature!"
 	sid := 1
-	const numActiveParties = 4
+	numActiveParties := 4
 	D := make([]*ring.Poly, numActiveParties)
 	m := make([]*ring.Poly, numActiveParties)
+	PRFKey := "PRF Key"
 
 	for i := 0; i < numActiveParties; i++ {
-		D[i], m[i] = SignRound1(i, sid, skShares[i], mu)
+		D[i], m[i] = SignRound1(i, sid, skShares[i], mu, []byte(PRFKey))
 	}
 
 	// Testing signing round 2 by simulating each of the parties
@@ -199,7 +200,7 @@ func generateRandomSeed() []byte {
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound1(partyInt int, sid int, skShare *ring.Poly, mu string) (D_i *ring.Poly, m_i *ring.Poly) {
+func SignRound1(partyInt int, sid int, skShare *ring.Poly, mu string, PRFKey []byte) (D_i *ring.Poly, m_i *ring.Poly) {
 	//
 
 	return nil, nil
@@ -300,4 +301,47 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D []*r
 		u_j[i] = &element
 	}
 	return u_j
+}
+
+// PRF to ring elements
+func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
+	hasher := sha3.NewShake128()
+
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+
+	// Handle PRF key
+	binary.Write(&buffer, binary.BigEndian, PRFKey)
+
+	// Handle seed
+	binary.Write(&buffer, binary.BigEndian, sd_ij)
+
+	// Handle integer sid
+	binary.Write(&buffer, binary.BigEndian, sid)
+
+	// Write the final concatenated data to the hasher
+	_, err := hasher.Write(buffer.Bytes())
+	if err != nil {
+		log.Fatalf("Error writing hash: %v\n", err)
+	}
+
+	hashOutputLength := n
+	hashOutput := make([]byte, hashOutputLength)
+	_, err = hasher.Read(hashOutput)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+
+	// Print the hash as a hexadecimal string
+	fmt.Printf("SHAKE128 Hash: %x\n", hashOutput)
+
+	prng, _ := sampling.NewKeyedPRNG(hashOutput)
+	prfUniformSampler := ring.NewUniformSampler(prng, r)
+
+	m_i := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		element := prfUniformSampler.ReadNew()
+		m_i[i] = &element
+	}
+	return m_i
 }
