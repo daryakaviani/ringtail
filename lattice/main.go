@@ -3,7 +3,9 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"math/big"
@@ -11,6 +13,7 @@ import (
 	"github.com/hashicorp/vault/shamir"
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
+	"golang.org/x/crypto/sha3"
 )
 
 const m = 5
@@ -173,10 +176,10 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, g
 	}
 
 	// Generate random seeds for i, j in [d]
-	seeds := make([][][]byte, d)
-	for i := 0; i < d; i++ {
-		seeds[i] = make([][]byte, d) // Initialize each second-level slice within the outer slice
-		for j := 0; j < d; j++ {
+	seeds := make([][][]byte, k)
+	for i := 0; i < k; i++ {
+		seeds[i] = make([][]byte, k)
+		for j := 0; j < k; j++ {
 			// Generate random seed sd
 			seeds[i][j] = generateRandomSeed()
 		}
@@ -187,16 +190,18 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, g
 
 func generateRandomSeed() []byte {
 	// Generate a random binary string of length ell
-	sd := make([]byte, (ell+7)/8)
+	sd := make([]byte, ell)
 	_, err := rand.Read(sd)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error generating random seed %v\n", err)
 	}
 	return sd
 }
 
 // Sign function signs a message using the secret key and returns the signature
 func SignRound1(partyInt int, sid int, skShare *ring.Poly, mu string) (D_i *ring.Poly, m_i *ring.Poly) {
+	//
+
 	return nil, nil
 }
 
@@ -215,9 +220,84 @@ func Verify(sig *ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c []*r
 	return false
 }
 
-// // Verify function verifies the signature of a message using the public key
-// func Verify(context *lattigo.Context, pk *lattigo.PublicKey, message string, signature *lattigo.Signature) bool {
-// 	messageBytes := []byte(message)
-// 	valid := pk.Verify(signature, messageBytes)
-// 	return valid
-// }
+// Hash parameters to a Gaussian distribution
+func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D []*ring.Poly, mu string, m []*ring.Poly) []*ring.Poly {
+	hasher := sha3.NewShake128()
+
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+
+	// Handle matrix A
+	for _, row := range *A {
+		for _, poly := range row {
+			data, err := poly.MarshalBinary()
+			if err != nil {
+				log.Fatalf("Error marshalling poly: %v\n", err)
+			}
+			buffer.Write(data)
+		}
+	}
+
+	// Handle slice b
+	for _, poly := range b {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Handle integer sid
+	binary.Write(&buffer, binary.BigEndian, sid)
+
+	// Handle integer j
+	binary.Write(&buffer, binary.BigEndian, j)
+
+	// Handle slice D
+	for _, poly := range D {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Handle string mu
+	buffer.WriteString(mu)
+
+	// Handle slice m
+	for _, poly := range m {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Write the final concatenated data to the hasher
+	_, err := hasher.Write(buffer.Bytes())
+	if err != nil {
+		log.Fatalf("Error writing hash: %v\n", err)
+	}
+
+	hashOutputLength := d - 1
+	hashOutput := make([]byte, hashOutputLength)
+	_, err = hasher.Read(hashOutput)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+
+	// Print the hash as a hexadecimal string
+	fmt.Printf("SHAKE128 Hash: %x\n", hashOutput)
+
+	prng, _ := sampling.NewKeyedPRNG(hashOutput)
+	gaussianParams := ring.DiscreteGaussian{}
+	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+
+	u_j := make([]*ring.Poly, d-1)
+	for i := 0; i < d-1; i++ {
+		element := hashGaussiamSampler.ReadNew()
+		u_j[i] = &element
+	}
+	return u_j
+}
