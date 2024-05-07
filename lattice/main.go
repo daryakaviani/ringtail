@@ -29,8 +29,7 @@ func main() {
 	r, _ := ring.NewRing(1<<LogN, ring.Qi60[:4])
 	prng, _ := sampling.NewPRNG()
 	uniformSampler := ring.NewUniformSampler(prng, r)
-	gaussianParams := ring.DiscreteGaussian{}
-	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	trustedDealerKey := "Trusted dealer key"
 
 	// Setup
 	A := Setup(uniformSampler)
@@ -38,7 +37,7 @@ func main() {
 	fmt.Println("A: ", A)
 
 	// Gen
-	skShares, seeds, b := Gen(r, A, uniformSampler, gaussianSampler)
+	skShares, seeds, b := Gen(r, A, uniformSampler, []byte(trustedDealerKey))
 
 	fmt.Println("Shares: ", skShares)
 	fmt.Println("Seeds: ", seeds)
@@ -50,9 +49,10 @@ func main() {
 	D := make([]*ring.Poly, numActiveParties)
 	m := make([]*ring.Poly, numActiveParties)
 	PRFKey := "PRF Key"
+	T := []int{1, 2, 3, 4}
 
 	for i := 0; i < numActiveParties; i++ {
-		D[i], m[i] = SignRound1(i, sid, skShares[i], mu, []byte(PRFKey))
+		D[i], m[i] = SignRound1(r, uniformSampler, i, sid, skShares[i], mu, []byte(PRFKey), seeds[i], T)
 	}
 
 	// Testing signing round 2 by simulating each of the parties
@@ -88,7 +88,11 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 }
 
 // Function to generate the secret-shared polynomials
-func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, gaussianSampler *ring.GaussianSampler) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
+func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
+	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
+	gaussianParams := ring.DiscreteGaussian{}
+	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+
 	// Sample the secret key from the ring
 	s := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
@@ -200,8 +204,50 @@ func generateRandomSeed() []byte {
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound1(partyInt int, sid int, skShare *ring.Poly, mu string, PRFKey []byte) (D_i *ring.Poly, m_i *ring.Poly) {
-	//
+func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, partyInt int, sid int, skShare *ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*ring.Poly, *ring.Poly) {
+	// Generate the row-wise mask from PRFs
+	m_i := make([]*ring.Poly, n)
+	for _, j := range T {
+		sd_ij := seeds_i[j]
+		m_ij := PRF(r, sid, sd_ij, PRFKey)
+		for k := 0; k < n; k++ {
+			r.Add(*m_i[k], *m_ij[k], *m_i[k])
+		}
+	}
+
+	// Sample the error from the Gaussian distribution
+	r_star := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		// Generate a new ring element from the Gaussian distribution
+		element := uniformSampler.ReadNew()
+		r_star[i] = &element
+	}
+
+	// Hash the secret key to seed the Gaussian
+	hasher := sha3.NewShake128()
+	skMarshalled, err := skShare.MarshalBinary()
+	if err != nil {
+		log.Fatalf("Error marshalling poly: %v\n", err)
+	}
+	hasher.Write(skMarshalled)
+	hashOutputLength := n // TODO: Check
+	skHash := make([]byte, hashOutputLength)
+	_, err = hasher.Read(skHash)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+
+	prng, _ := sampling.NewKeyedPRNG(skHash)
+	gaussianParams := ring.DiscreteGaussian{}
+	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+
+	// Sample the error from the Gaussian distribution
+	e_star := make([]*ring.Poly, m)
+	for i := 0; i < m; i++ {
+		// Generate a new ring element from the Gaussian distribution
+		element := gaussianSampler.ReadNew()
+		e_star[i] = &element
+	}
 
 	return nil, nil
 }
