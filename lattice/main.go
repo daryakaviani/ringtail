@@ -46,8 +46,8 @@ func main() {
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	numActiveParties := 4
-	D := make([]*[][]*ring.Poly, numActiveParties)
-	m := make([][]*ring.Poly, numActiveParties)
+	D := make(map[int]*[][]*ring.Poly)
+	m := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
 	T := []int{1, 2, 3, 4}
 
@@ -59,18 +59,18 @@ func main() {
 	fmt.Println("m: ", m)
 
 	// Testing signing round 2 by simulating each of the parties
-	c := make([]*ring.Poly, numActiveParties)
-	z := make([]*ring.Poly, numActiveParties)
+	c := make(map[int]*ring.Poly)
+	z := make(map[int]*ring.Poly)
 	for i := 0; i < numActiveParties; i++ {
-		c[i], z[i] = SignRound2(i, D, m)
+		c[i], z[i] = SignRound2(r, i, D, m, A, b, sid, mu, T)
 	}
 
-	// Aggregate the signature
-	sig := SignFinalize(z)
+	// // Aggregate the signature
+	// sig := SignFinalize(z)
 
-	// Verify the signature
-	valid := Verify(sig, A, mu, b, c, z)
-	fmt.Printf("Signature Verification Result: %v\n", valid)
+	// // Verify the signature
+	// valid := Verify(sig, A, mu, b, c, z)
+	// fmt.Printf("Signature Verification Result: %v\n", valid)
 }
 
 // Generate the public parameters
@@ -318,7 +318,40 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(partyInt int, D []*[][]*ring.Poly, m [][]*ring.Poly) (c_i *ring.Poly, z_i *ring.Poly) {
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, sid int, mu string, T []int) (c_i *ring.Poly, z_i *ring.Poly) {
+	// Create the noise matrix u
+	u := make([][]*ring.Poly, len(T))
+	onePoly := r.NewMonomialXi(0)
+
+	for _, j := range T {
+		oneSlice := []*ring.Poly{onePoly.CopyNew()}
+		u_j := H_u(r, A, b, sid, j, DMap, mu, mMap)
+		u[j] = append(oneSlice, u_j...)
+	}
+
+	h := make([]*ring.Poly, len(T))
+
+	for j, D_j := range DMap {
+		for i := 0; i < d; i++ {
+			newPoly := r.NewPoly()
+			h[j] = &newPoly
+
+			// Compute D_j * u_j for row i
+			for k := 0; k < m; k++ {
+				// Compute D_j[i][k] * u_j[k] mod q and add it to h[j][i]
+				r.MulCoeffsMontgomeryThenAdd(*(*D_j)[i][k], *u[j][k], *h[j])
+			}
+		}
+	}
+
+	h_sum := r.NewPoly()
+	for _, j := range T {
+		r.Add(h_sum, *h[j], h_sum)
+	}
+
+	// c = H_c
+
+	// Compute the aggregated commitment h
 	return nil, nil
 }
 
@@ -333,7 +366,7 @@ func Verify(sig *ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c []*r
 }
 
 // Hash parameters to a Gaussian distribution
-func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D []*ring.Poly, mu string, m []*ring.Poly) []*ring.Poly {
+func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap map[int]*[][]*ring.Poly, mu string, mMap map[int][]*ring.Poly) []*ring.Poly {
 	hasher := sha3.NewShake128()
 
 	// Buffer to store all concatenated bytes
@@ -365,25 +398,31 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D []*r
 	// Handle integer j
 	binary.Write(&buffer, binary.BigEndian, j)
 
-	// Handle slice D
-	for _, poly := range D {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
+	// Handle map of matrices D
+	for _, D := range DMap {
+		for _, row := range *D {
+			for _, poly := range row {
+				data, err := poly.MarshalBinary()
+				if err != nil {
+					log.Fatalf("Error marshalling poly: %v\n", err)
+				}
+				buffer.Write(data)
+			}
 		}
-		buffer.Write(data)
 	}
 
 	// Handle string mu
 	buffer.WriteString(mu)
 
-	// Handle slice m
-	for _, poly := range m {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
+	// Handle map of slices m
+	for _, m := range mMap {
+		for _, poly := range m {
+			data, err := poly.MarshalBinary()
+			if err != nil {
+				log.Fatalf("Error marshalling poly: %v\n", err)
+			}
+			buffer.Write(data)
 		}
-		buffer.Write(data)
 	}
 
 	// Write the final concatenated data to the hasher
