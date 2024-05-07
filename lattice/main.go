@@ -15,10 +15,10 @@ import (
 
 const m = 5
 const n = 5
-const q = 5
-const t = 3
-const k = 5
-const d = 5
+const q = 5 // Prime
+const t = 3 // Active threshold
+const k = 5 // Total number of parties
+const d = 5 // Length of joint noise vector
 const ell = 5
 
 func main() {
@@ -35,17 +35,35 @@ func main() {
 	fmt.Println("A: ", A)
 
 	// Gen
-	shares, seeds := Gen(r, A, uniformSampler, gaussianSampler)
+	skShares, seeds, b := Gen(r, A, uniformSampler, gaussianSampler)
 
-	fmt.Println("Shares: ", shares)
+	fmt.Println("Shares: ", skShares)
 	fmt.Println("Seeds: ", seeds)
 
-	// Sign
-	message := "Hello, Threshold Signature!"
+	// Test signing round 1 by simulating each of the parties
+	mu := "Hello, Threshold Signature!"
+	sid := 1
+	const numActiveParties = 4
+	D := make([]*ring.Poly, numActiveParties)
+	m := make([]*ring.Poly, numActiveParties)
 
-	// Verify
-	// valid := Verify(context, pk, message, signature)
-	// fmt.Printf("Signature Verification Result: %v\n", valid)
+	for i := 0; i < numActiveParties; i++ {
+		D[i], m[i] = SignRound1(i, sid, skShares[i], mu)
+	}
+
+	// Testing signing round 2 by simulating each of the parties
+	c := make([]*ring.Poly, numActiveParties)
+	z := make([]*ring.Poly, numActiveParties)
+	for i := 0; i < numActiveParties; i++ {
+		c[i], z[i] = SignRound2(i, D, m)
+	}
+
+	// Aggregate the signature
+	sig := SignFinalize(z)
+
+	// Verify the signature
+	valid := Verify(sig, A, mu, b, c, z)
+	fmt.Printf("Signature Verification Result: %v\n", valid)
 }
 
 // Generate the public parameters
@@ -66,7 +84,7 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 }
 
 // Function to generate the secret-shared polynomials
-func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, gaussianSampler *ring.GaussianSampler) ([]*ring.Poly, [][][]byte) {
+func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, gaussianSampler *ring.GaussianSampler) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
 	// Sample the secret key from the ring
 	s := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
@@ -164,8 +182,7 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, g
 		}
 	}
 
-	// return skShares, seeds
-	return skShares, seeds
+	return skShares, seeds, b
 }
 
 func generateRandomSeed() []byte {
@@ -173,15 +190,30 @@ func generateRandomSeed() []byte {
 	sd := make([]byte, (ell+7)/8)
 	_, err := rand.Read(sd)
 	if err != nil {
-		panic(err) // Handle error appropriately
+		panic(err)
 	}
 	return sd
 }
 
-// // Sign function signs a message using the secret key and returns the signature
-// func Sign(sid string, skShares []*ring.Poly, mu) (c, z) {
+// Sign function signs a message using the secret key and returns the signature
+func SignRound1(partyInt int, sid int, skShare *ring.Poly, mu string) (D_i *ring.Poly, m_i *ring.Poly) {
+	return nil, nil
+}
 
-// }
+// Sign function signs a message using the secret key and returns the signature
+func SignRound2(partyInt int, D []*ring.Poly, m []*ring.Poly) (c_i *ring.Poly, z_i *ring.Poly) {
+	return nil, nil
+}
+
+// An arbitrary party aggregates the signatures
+func SignFinalize(z []*ring.Poly) *ring.Poly {
+	return nil
+}
+
+// An verify
+func Verify(sig *ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c []*ring.Poly, z []*ring.Poly) bool {
+	return false
+}
 
 // // Verify function verifies the signature of a message using the public key
 // func Verify(context *lattigo.Context, pk *lattigo.PublicKey, message string, signature *lattigo.Signature) bool {
