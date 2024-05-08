@@ -20,6 +20,7 @@ import (
 const m = 5
 const n = 5
 const q = 5 // Prime
+const p = 4
 const t = 3 // Active threshold
 const k = 5 // Total number of parties
 const d = 5 // Length of joint noise vector
@@ -351,7 +352,13 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 		r.Add(h_sum, *h[j], h_sum)
 	}
 
+	// Round h to the nearest multiple of p
+	RoundCoeffsToNearestMultiple(r, &h_sum, p)
+
 	// c = H_c
+	c := H_c(r, A, b, &h_sum, mu)
+
+	// Compute the column-wise mask
 
 	// Compute the aggregated commitment h
 	return nil, nil
@@ -499,7 +506,7 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 }
 
 // Hash to low norm ring elements
-func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu string) *ring.Poly {
+func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h *ring.Poly, mu string) *ring.Poly {
 	hasher := sha3.NewShake128()
 
 	// Buffer to store all concatenated bytes
@@ -526,19 +533,17 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 	}
 
 	// Handle slice h
-	for _, poly := range h {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
+	data, err := h.MarshalBinary()
+	if err != nil {
+		log.Fatalf("Error marshalling poly: %v\n", err)
 	}
+	buffer.Write(data)
 
 	// Handle string mu
 	binary.Write(&buffer, binary.BigEndian, mu)
 
 	// Write the final concatenated data to the hasher
-	_, err := hasher.Write(buffer.Bytes())
+	_, err = hasher.Write(buffer.Bytes())
 	if err != nil {
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
@@ -594,4 +599,29 @@ func (lns *lowNormSampler) newPolyLowNorm(norm *big.Int) (pol ring.Poly) {
 	lns.baseRing.AtLevel(pol.Level()).SetCoefficientsBigint(lns.coeffs, pol)
 
 	return
+}
+
+// RoundPolyCoefficientsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
+// and updates the polynomial using the SetCoefficientsBigint method.
+func RoundCoeffsToNearestMultiple(r *ring.Ring, poly *ring.Poly, p uint64) {
+	pBig := new(big.Int).SetUint64(p)
+	halfP := new(big.Int).Div(new(big.Int).SetUint64(p), big.NewInt(2)) // p/2 for rounding calculation
+	roundedCoeffs := make([]*big.Int, poly.N())
+	coeffsBigint := make([]*big.Int, poly.N())
+	r.PolyToBigint(*poly, 1, coeffsBigint)
+
+	// Calculate rounded coefficients
+	for i, coeff := range coeffsBigint {
+		// Perform rounding
+		mod := new(big.Int).Mod(coeff, pBig)
+		if mod.Cmp(halfP) > 0 {
+			coeff.Add(coeff, pBig)
+			coeff.Sub(coeff, mod)
+		} else {
+			coeff.Sub(coeff, mod)
+		}
+		roundedCoeffs[i].Set(coeff)
+	}
+
+	r.SetCoefficientsBigint(roundedCoeffs, *poly)
 }
