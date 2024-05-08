@@ -50,12 +50,13 @@ func main() {
 	sid := 1
 	numActiveParties := 4
 	D := make(map[int]*[][]*ring.Poly)
+	concatR := make(map[int]*[][]*ring.Poly)
 	m := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
 	T := []int{1, 2, 3, 4}
 
 	for i := 0; i < numActiveParties; i++ {
-		D[i], m[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[i], mu, []byte(PRFKey), seeds[i], T)
+		D[i], m[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, (*skShares)[i], mu, []byte(PRFKey), seeds[i], T)
 	}
 
 	fmt.Println("D: ", D)
@@ -65,7 +66,7 @@ func main() {
 	c := make(map[int]*ring.Poly)
 	z := make(map[int]*ring.Poly)
 	for i := 0; i < numActiveParties; i++ {
-		c[i], z[i] = SignRound2(r, i, D, m, A, b, sid, mu, T)
+		c[i], z[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i])
 	}
 
 	// // Aggregate the signature
@@ -94,7 +95,7 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 }
 
 // Function to generate the secret-shared polynomials
-func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
+func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) (*[][]*ring.Poly, [][][]byte, []*ring.Poly) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
 	gaussianParams := ring.DiscreteGaussian{}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
@@ -174,15 +175,15 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 	}
 
 	fmt.Println("sharesCoeffs: ", sharesCoeffs)
-	fmt.Println("sharesCoeffs: ", sharesCoeffs)
 
 	// Produce secret-shared elements
-	skShares := make([]*ring.Poly, k)
+	skShares := make([][]*ring.Poly, k)
 	for l := 0; l < k; l++ {
+		skShares[l] = make([]*ring.Poly, n)
 		for i := 0; i < n; i++ {
 			elem := r.NewPoly()
 			r.SetCoefficientsBigint(sharesCoeffs[l][i], elem)
-			skShares[l] = &elem
+			skShares[l][i] = &elem
 		}
 	}
 
@@ -196,7 +197,7 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		}
 	}
 
-	return skShares, seeds, b
+	return &skShares, seeds, b
 }
 
 func generateRandomSeed() []byte {
@@ -210,7 +211,7 @@ func generateRandomSeed() []byte {
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare *ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly) {
+func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare []*ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly, *[][]*ring.Poly) {
 	// Generate the row-wise mask from PRFs
 	m_i := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
@@ -234,16 +235,23 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		r_star[i] = &element
 	}
 
-	// Hash the secret key to seed the Gaussian
 	hasher := sha3.NewShake128()
-	skMarshalled, err := skShare.MarshalBinary()
-	if err != nil {
-		log.Fatalf("Error marshalling poly: %v\n", err)
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+	// Handle slice sk
+	for _, poly := range skShare {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
 	}
-	hasher.Write(skMarshalled)
+
+	hasher.Write(buffer.Bytes())
+
 	hashOutputLength := n // TODO: Check
 	skHash := make([]byte, hashOutputLength)
-	_, err = hasher.Read(skHash)
+	_, err := hasher.Read(skHash)
 	if err != nil {
 		log.Fatalf("Error reading hash: %v\n", err)
 	}
@@ -317,11 +325,11 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		}
 	}
 
-	return &D_i, m_i
+	return &D_i, m_i, &concatenatedR
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, sid int, mu string, T []int) (c_i *ring.Poly, z_i *ring.Poly) {
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly) (*ring.Poly, *ring.Poly) {
 	// Create the noise matrix u
 	u := make([][]*ring.Poly, len(T))
 	onePoly := r.NewMonomialXi(0)
@@ -358,10 +366,63 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	// c = H_c
 	c := H_c(r, A, b, &h_sum, mu)
 
-	// Compute the column-wise mask
+	// Compute the column-wise mask from PRFs
+	m_i_prime := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		newPoly := r.NewPoly()
+		m_i_prime[i] = &newPoly
+	}
+	for _, j := range T {
+		sd_ji := seeds[j][partyInt]
+		m_ij := PRF(r, sid, sd_ji, PRFKey)
+		for k := 0; k < n; k++ {
+			r.Add(*m_i_prime[k], *m_ij[k], *m_i_prime[k])
+		}
+	}
 
-	// Compute the aggregated commitment h
-	return nil, nil
+	// First term: s_i * c * lambda_T_i
+	interpolator, err := ring.NewInterpolator(r.N(), uint64(len(T)))
+	if err != nil {
+		log.Fatalf("Cannot create interpolator: %v", err)
+	}
+
+	var concatSkElems []uint64
+	for _, s_iElem := range s_i {
+		for i := 0; i < len(s_iElem.Coeffs); i++ {
+			concatSkElems = append(concatSkElems, s_iElem.Coeffs[i]...)
+		}
+	}
+	lagrangeCoeffs, err := interpolator.Lagrange([]uint64{uint64(partyInt)}, concatSkElems)
+	if err != nil {
+		log.Fatalf("Cannot get Lagrange coefficients: %v", err)
+	}
+	lambda_T_i := lagrangeCoeffs[partyInt] // This is a scalar value
+
+	// First term: Iterate over each polynomial in s_i to compute (s_i * c * lambda_T_i)
+	scalerProductSum := r.NewPoly()
+	for _, poly := range s_i {
+		scalerProduct := r.NewPoly()
+		r.MulCoeffsMontgomery(*poly, *c, scalerProduct) // s_i_elem * c
+		scaledProduct := r.NewPoly()
+		r.MulScalar(scalerProduct, lambda_T_i, scaledProduct)    // (s_i_elem * c) * lambda_T_i
+		r.Add(scalerProductSum, scaledProduct, scalerProductSum) // Accumulate results
+	}
+
+	// Second term: (r_i_star, R_i) * (1, u_i) mod q
+	weightedSum := r.NewPoly()
+	r.Add(weightedSum, *(*concatR_i)[partyInt][0], weightedSum) // Start with r_i_star
+	for j := 1; j < len((*concatR_i)[partyInt]); j++ {
+		temp := r.NewPoly()
+		r.MulCoeffsMontgomery(*(*concatR_i)[partyInt][j], *u[partyInt][j-1], temp) // R_i[j-1] * u_i[j-1]
+		r.Add(weightedSum, temp, weightedSum)                                      // Accumulate
+	}
+
+	// Third term: m_i_prime
+	z_i := r.NewPoly()
+	r.Add(scalerProductSum, weightedSum, z_i) // Add first two terms (scalerProductSum and weightedSum)
+	r.Add(z_i, *m_i_prime[partyInt], z_i)     // Add m_i_prime
+
+	return &z_i, c
 }
 
 // An arbitrary party aggregates the signatures
