@@ -26,6 +26,7 @@ const k = 5 // Total number of parties
 const d = 5 // Length of joint noise vector
 const ell = 5
 const beta = 10
+const betaDelta = 10
 
 func main() {
 	LogN := 10
@@ -74,9 +75,9 @@ func main() {
 	Delta, sig := SignFinalize(r, z, m, A, b, c[0])
 	fmt.Print(Delta, sig)
 
-	// // Verify the signature
-	// valid := Verify(sig)
-	// fmt.Printf("Signature Verification Result: %v\n", valid)
+	// Verify the signature
+	valid := Verify(r, sig, A, mu, b, c[0], Delta, betaDelta)
+	fmt.Printf("Signature Verification Result: %v\n", valid)
 }
 
 // Generate the public parameters
@@ -357,16 +358,13 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 		}
 	}
 
-	h_sum := r.NewPoly()
-	for _, j := range T {
-		r.Add(h_sum, *h[j], h_sum)
+	// Round h to the nearest multiple of p
+	for _, poly := range h {
+		RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 
-	// Round h to the nearest multiple of p
-	RoundCoeffsToNearestMultiple(r, &h_sum, p)
-
 	// c = H_c
-	c := H_c(r, A, b, &h_sum, mu)
+	c := H_c(r, A, b, h, mu)
 
 	// Compute the column-wise mask from PRFs
 	m_i_prime := make([]*ring.Poly, n)
@@ -405,11 +403,6 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	}
 
 	return z_i, c
-}
-
-// An verify
-func Verify(sig *ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c []*ring.Poly, z []*ring.Poly) bool {
-	return false
 }
 
 // Hash parameters to a Gaussian distribution
@@ -544,7 +537,7 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 }
 
 // Hash to low norm ring elements
-func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h *ring.Poly, mu string) *ring.Poly {
+func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu string) *ring.Poly {
 	hasher := sha3.NewShake128()
 
 	// Buffer to store all concatenated bytes
@@ -570,18 +563,20 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h *ring.Poly, mu strin
 		buffer.Write(data)
 	}
 
-	// Handle slice h
-	data, err := h.MarshalBinary()
-	if err != nil {
-		log.Fatalf("Error marshalling poly: %v\n", err)
+	// Handle slice b
+	for _, poly := range h {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
 	}
-	buffer.Write(data)
 
 	// Handle string mu
 	binary.Write(&buffer, binary.BigEndian, mu)
 
 	// Write the final concatenated data to the hasher
-	_, err = hasher.Write(buffer.Bytes())
+	_, err := hasher.Write(buffer.Bytes())
 	if err != nil {
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
@@ -764,4 +759,62 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 	}
 
 	return &Delta, z_sum
+}
+
+func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta *ring.Poly, betaDelta uint64) bool {
+	// Calculate [Az - bc]_p + Delta
+	computedH := make([]*ring.Poly, len(z))
+	for i := range computedH {
+		newPoly := r.NewPoly()
+		computedH[i] = &newPoly
+		for k := range z {
+			temp := r.NewPoly()
+			r.MulCoeffsMontgomery(*(*A)[i][k], *z[k], temp)
+			r.Add(*computedH[i], temp, *computedH[i])
+		}
+	}
+
+	bc := make([]*ring.Poly, len(b))
+	for i, bi := range b {
+		newPoly := r.NewPoly()
+		bc[i] = &newPoly
+		r.MulCoeffsMontgomery(*bi, *c, *bc[i])           // Compute b_i * c
+		r.Sub(*computedH[i], *bc[i], *computedH[i])      // Compute Az_i - b_i*c
+		RoundCoeffsToNearestMultiple(r, computedH[i], p) // Round to nearest multiple of p
+		r.Add(*computedH[i], *Delta, *computedH[i])      // Add Delta
+	}
+
+	// Verify that c equals H_c([Az - bc]_p + Delta, mu)
+	computedC := H_c(r, A, b, computedH, mu)
+	if !r.Equal(*c, *computedC) {
+		return false
+	}
+
+	// Verify that ||Delta||_inf <= betaDelta
+	if !checkInfinityNorm(r, Delta, betaDelta) {
+		return false
+	}
+
+	return true
+}
+
+// checkInfinityNorm checks if the infinity norm of the polynomial Delta is less than or equal to betaDelta
+func checkInfinityNorm(r *ring.Ring, Delta *ring.Poly, betaDelta uint64) bool {
+	coeffsBigint := make([]*big.Int, Delta.N())
+	r.PolyToBigint(*Delta, 1, coeffsBigint)
+
+	// Calculate it here
+	maxValue := big.NewInt(0) // Temporary variable to store the maximum value found
+	for _, coeff := range coeffsBigint {
+		absCoeff := new(big.Int).Abs(coeff) // Get the absolute value of the coefficient
+		if absCoeff.Cmp(maxValue) == 1 {    // Compare absCoeff with maxValue
+			maxValue.Set(absCoeff) // Update maxValue if absCoeff is greater
+		}
+	}
+
+	// Convert betaDelta to big.Int for comparison
+	betaDeltaBig := new(big.Int).SetUint64(betaDelta)
+
+	// Check if the maximum absolute value is less than or equal to betaDelta
+	return maxValue.Cmp(betaDeltaBig) <= 0
 }
