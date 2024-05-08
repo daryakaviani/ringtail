@@ -63,10 +63,10 @@ func main() {
 	fmt.Println("m: ", m)
 
 	// Testing signing round 2 by simulating each of the parties
+	z := make(map[int][]*ring.Poly)
 	c := make(map[int]*ring.Poly)
-	z := make(map[int]*ring.Poly)
 	for i := 0; i < numActiveParties; i++ {
-		c[i], z[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i])
+		z[i], c[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i])
 	}
 
 	// // Aggregate the signature
@@ -329,7 +329,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly) (*ring.Poly, *ring.Poly) {
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly) ([]*ring.Poly, *ring.Poly) {
 	// Create the noise matrix u
 	u := make([][]*ring.Poly, len(T))
 	onePoly := r.NewMonomialXi(0)
@@ -398,31 +398,29 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	}
 	lambda_T_i := lagrangeCoeffs[partyInt] // This is a scalar value
 
-	// First term: Iterate over each polynomial in s_i to compute (s_i * c * lambda_T_i)
-	scalerProductSum := r.NewPoly()
-	for _, poly := range s_i {
-		scalerProduct := r.NewPoly()
-		r.MulCoeffsMontgomery(*poly, *c, scalerProduct) // s_i_elem * c
-		scaledProduct := r.NewPoly()
-		r.MulScalar(scalerProduct, lambda_T_i, scaledProduct)    // (s_i_elem * c) * lambda_T_i
-		r.Add(scalerProductSum, scaledProduct, scalerProductSum) // Accumulate results
+	// Compute z_i as a vector of ring.Poly
+	z_i := make([]*ring.Poly, len(s_i))
+	for index, poly := range s_i {
+		finalPoly := r.NewPoly()
+		r.MulCoeffsMontgomery(*poly, *c, finalPoly)   // s_i_elem * c
+		r.MulScalar(finalPoly, lambda_T_i, finalPoly) // (s_i_elem * c) * lambda_T_i
+
+		// Calculate (concatR_i * u_i) mod q for this poly
+		weightedSum := r.NewPoly()
+		for j := 0; j < len((*concatR_i)[partyInt]); j++ {
+			temp := r.NewPoly()
+			r.MulCoeffsMontgomery(*(*concatR_i)[partyInt][j], *u[partyInt][j], temp) // concatR_i_elem * u_i_elem
+			r.Add(weightedSum, temp, weightedSum)                                    // Accumulate
+		}
+
+		// Combine all terms
+		r.Add(finalPoly, weightedSum, finalPoly)          // Add weightedSum to (s_i_elem * c) * lambda_T_i
+		r.Add(finalPoly, *m_i_prime[partyInt], finalPoly) // Add m_i_prime[partyInt] to the finalPoly
+
+		z_i[index] = &finalPoly
 	}
 
-	// Second term: (r_i_star, R_i) * (1, u_i) mod q
-	weightedSum := r.NewPoly()
-	r.Add(weightedSum, *(*concatR_i)[partyInt][0], weightedSum) // Start with r_i_star
-	for j := 1; j < len((*concatR_i)[partyInt]); j++ {
-		temp := r.NewPoly()
-		r.MulCoeffsMontgomery(*(*concatR_i)[partyInt][j], *u[partyInt][j-1], temp) // R_i[j-1] * u_i[j-1]
-		r.Add(weightedSum, temp, weightedSum)                                      // Accumulate
-	}
-
-	// Third term: m_i_prime
-	z_i := r.NewPoly()
-	r.Add(scalerProductSum, weightedSum, z_i) // Add first two terms (scalerProductSum and weightedSum)
-	r.Add(z_i, *m_i_prime[partyInt], z_i)     // Add m_i_prime
-
-	return &z_i, c
+	return z_i, c
 }
 
 // An arbitrary party aggregates the signatures
