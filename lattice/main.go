@@ -19,8 +19,8 @@ import (
 
 const m = 5
 const n = 5
-const q = 5 // Prime
-const p = 4
+const q = 11 // Prime
+const p = 7
 const t = 3 // Active threshold
 const k = 5 // Total number of parties
 const d = 5 // Length of joint noise vector
@@ -53,7 +53,8 @@ func main() {
 	concatR := make(map[int]*[][]*ring.Poly)
 	m := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
-	T := []int{1, 2, 3, 4}
+	T := []int{0, 1, 2, 3}
+	lagrangeCoeffs := GenLagrangeCoefficients(r, T)
 
 	for i := 0; i < numActiveParties; i++ {
 		D[i], m[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, (*skShares)[i], mu, []byte(PRFKey), seeds[i], T)
@@ -66,11 +67,11 @@ func main() {
 	z := make(map[int][]*ring.Poly)
 	c := make(map[int]*ring.Poly)
 	for i := 0; i < numActiveParties; i++ {
-		z[i], c[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i])
+		z[i], c[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i], lagrangeCoeffs[i])
 	}
 
 	// // Aggregate the signature
-	// sig := SignFinalize(z)
+	// sig := SignFinalize(r, z, m, A, b, c, p)
 
 	// // Verify the signature
 	// valid := Verify(sig, A, mu, b, c, z)
@@ -329,7 +330,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly) ([]*ring.Poly, *ring.Poly) {
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly) {
 	// Create the noise matrix u
 	u := make([][]*ring.Poly, len(T))
 	onePoly := r.NewMonomialXi(0)
@@ -380,30 +381,32 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 		}
 	}
 
-	// First term: s_i * c * lambda_T_i
-	interpolator, err := ring.NewInterpolator(r.N(), uint64(len(T)))
-	if err != nil {
-		log.Fatalf("Cannot create interpolator: %v", err)
-	}
+	// // First term: s_i * c * lambda_T_i
+	// var prime uint64 = 65537 // TODO: This is a placeholder, not sure what to add here
+	// interpolator, err := ring.NewInterpolator(r.N(), prime)
+	// if err != nil {
+	// 	log.Fatalf("Cannot create interpolator: %v", err)
+	// }
 
-	var concatSkElems []uint64
-	for _, s_iElem := range s_i {
-		for i := 0; i < len(s_iElem.Coeffs); i++ {
-			concatSkElems = append(concatSkElems, s_iElem.Coeffs[i]...)
-		}
-	}
-	lagrangeCoeffs, err := interpolator.Lagrange([]uint64{uint64(partyInt)}, concatSkElems)
-	if err != nil {
-		log.Fatalf("Cannot get Lagrange coefficients: %v", err)
-	}
-	lambda_T_i := lagrangeCoeffs[partyInt] // This is a scalar value
+	// var concatSkElems []uint64
+	// for _, s_iElem := range s_i {
+	// 	for i := 0; i < len(s_iElem.Coeffs); i++ {
+	// 		concatSkElems = append(concatSkElems, s_iElem.Coeffs[i]...)
+	// 	}
+	// }
+	// lagrangeCoeffs, err := interpolator.Lagrange([]uint64{uint64(partyInt)}, concatSkElems)
+	// if err != nil {
+	// 	log.Fatalf("Cannot get Lagrange coefficients: %v", err)
+	// }
+	// fmt.Printf("Lagrange: %v", lagrangeCoeffs)
+	// lambda_T_i := lagrangeCoeffs[0] // This is a scalar value, TODO: figure out the interpolation situation
 
 	// Compute z_i as a vector of ring.Poly
 	z_i := make([]*ring.Poly, len(s_i))
 	for index, poly := range s_i {
 		finalPoly := r.NewPoly()
-		r.MulCoeffsMontgomery(*poly, *c, finalPoly)   // s_i_elem * c
-		r.MulScalar(finalPoly, lambda_T_i, finalPoly) // (s_i_elem * c) * lambda_T_i
+		r.MulCoeffsMontgomery(*poly, *c, finalPoly)              // s_i_elem * c
+		r.MulCoeffsMontgomery(finalPoly, *lambda_T_i, finalPoly) // (s_i_elem * c) * lambda_T_i
 
 		// Calculate (concatR_i * u_i) mod q for this poly
 		weightedSum := r.NewPoly()
@@ -421,11 +424,6 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	}
 
 	return z_i, c
-}
-
-// An arbitrary party aggregates the signatures
-func SignFinalize(z []*ring.Poly) *ring.Poly {
-	return nil
 }
 
 // An verify
@@ -671,6 +669,11 @@ func RoundCoeffsToNearestMultiple(r *ring.Ring, poly *ring.Poly, p uint64) {
 
 	// Calculate rounded coefficients
 	for i, coeff := range coeffsBigint {
+		// Initialize if nil
+		if roundedCoeffs[i] == nil {
+			roundedCoeffs[i] = new(big.Int)
+		}
+
 		// Perform rounding
 		mod := new(big.Int).Mod(coeff, pBig)
 		if mod.Cmp(halfP) > 0 {
@@ -683,4 +686,49 @@ func RoundCoeffsToNearestMultiple(r *ring.Ring, poly *ring.Poly, p uint64) {
 	}
 
 	r.SetCoefficientsBigint(roundedCoeffs, *poly)
+}
+
+func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
+	lagrangePolynomials := make([]*ring.Poly, len(T))
+
+	// For each index in T, we need to create a polynomial l_j(x) that is 1 at x_j and 0 at all other x_m in T
+	for j, xj := range T {
+		// Start with l_j(x) = 1
+		l_j := r.NewPoly()
+		r.AddScalar(l_j, 1, l_j)
+
+		// Create the Lagrange polynomial for each xj
+		for _, xm := range T {
+			if xm != xj {
+				// Compute (x - xm)
+				tempPoly := r.NewMonomialXi(1)
+				r.SubScalar(tempPoly, uint64(xm), tempPoly) // tempPoly = x - xm
+
+				// Multiply l_j by (x - xm)
+				resultPoly := r.NewPoly()
+				r.MulCoeffsMontgomery(l_j, tempPoly, resultPoly)
+				l_j = resultPoly
+			}
+		}
+
+		// Normalize l_j(x) to make l_j(x_j) = 1
+		// Compute the denominator product (x_j - xm) for m != j
+		denom := uint64(1)
+		for _, xm := range T {
+			if xm != xj {
+				denom *= uint64(xj - xm)
+				denom %= q // Perform modulo operation to keep within field limits
+			}
+		}
+
+		// Compute multiplicative inverse of denom mod q
+		denomInv := new(big.Int).ModInverse(big.NewInt(int64(denom)), big.NewInt(int64(q)))
+
+		// Multiply each coefficient of l_j by denomInv
+		r.MulScalarBigint(l_j, denomInv, l_j)
+
+		lagrangePolynomials[j] = &l_j
+	}
+
+	return lagrangePolynomials
 }
