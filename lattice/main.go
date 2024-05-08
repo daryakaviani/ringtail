@@ -70,11 +70,12 @@ func main() {
 		z[i], c[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i], lagrangeCoeffs[i])
 	}
 
-	// // Aggregate the signature
-	// sig := SignFinalize(r, z, m, A, b, c, p)
+	// Aggregate the signature
+	Delta, sig := SignFinalize(r, z, m, A, b, c[0])
+	fmt.Print(Delta, sig)
 
 	// // Verify the signature
-	// valid := Verify(sig, A, mu, b, c, z)
+	// valid := Verify(sig)
 	// fmt.Printf("Signature Verification Result: %v\n", valid)
 }
 
@@ -380,26 +381,6 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 			r.Add(*m_i_prime[k], *m_ij[k], *m_i_prime[k])
 		}
 	}
-
-	// // First term: s_i * c * lambda_T_i
-	// var prime uint64 = 65537 // TODO: This is a placeholder, not sure what to add here
-	// interpolator, err := ring.NewInterpolator(r.N(), prime)
-	// if err != nil {
-	// 	log.Fatalf("Cannot create interpolator: %v", err)
-	// }
-
-	// var concatSkElems []uint64
-	// for _, s_iElem := range s_i {
-	// 	for i := 0; i < len(s_iElem.Coeffs); i++ {
-	// 		concatSkElems = append(concatSkElems, s_iElem.Coeffs[i]...)
-	// 	}
-	// }
-	// lagrangeCoeffs, err := interpolator.Lagrange([]uint64{uint64(partyInt)}, concatSkElems)
-	// if err != nil {
-	// 	log.Fatalf("Cannot get Lagrange coefficients: %v", err)
-	// }
-	// fmt.Printf("Lagrange: %v", lagrangeCoeffs)
-	// lambda_T_i := lagrangeCoeffs[0] // This is a scalar value, TODO: figure out the interpolation situation
 
 	// Compute z_i as a vector of ring.Poly
 	z_i := make([]*ring.Poly, len(s_i))
@@ -731,4 +712,56 @@ func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
 	}
 
 	return lagrangePolynomials
+}
+
+func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly) (*ring.Poly, []*ring.Poly) {
+	// Initialize z_sum as an array of zero polynomials
+	z_sum := make([]*ring.Poly, n)
+	for i := range z_sum {
+		newPoly := r.NewPoly()
+		z_sum[i] = &newPoly
+	}
+
+	// Compute z_sum = Σ(z_j - m_j) mod q
+	for party, z_j := range z { // Looping through each z_j
+		m_j := m[party]
+		for i := 0; i < n; i++ {
+			r.Sub(*z_j[i], *m_j[i], *z_j[i])     // z_j[i] - m_j[i] mod q
+			r.Add(*z_sum[i], *z_j[i], *z_sum[i]) // Accumulate the result
+		}
+	}
+
+	// Compute Az
+	Az := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		newPoly := r.NewPoly()
+		Az[i] = &newPoly
+		for k := 0; k < n; k++ {
+			temp := r.NewPoly()
+			r.MulCoeffsMontgomery(*(*A)[i][k], *z_sum[k], temp)
+			r.Add(*Az[i], temp, *Az[i])
+		}
+	}
+
+	// Compute Az - bc
+	bc := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		newPoly := r.NewPoly()
+		bc[i] = &newPoly
+		r.MulCoeffsMontgomery(*b[i], *c, *bc[i])
+		r.Sub(*Az[i], *bc[i], *Az[i]) // Az[i] - bc[i]
+	}
+
+	// Round Az - bc to the nearest multiple of p
+	for _, poly := range Az {
+		RoundCoeffsToNearestMultiple(r, poly, p)
+	}
+
+	// Compute Δ = [h_p] - [Az - bc]_p
+	Delta := r.NewPoly() // Assuming h_p is defined or available, modify as required
+	for _, az := range Az {
+		r.Sub(Delta, *az, Delta) // Δ -= Az[i] after rounding
+	}
+
+	return &Delta, z_sum
 }
