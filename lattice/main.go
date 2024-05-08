@@ -12,7 +12,6 @@ import (
 
 	"github.com/hashicorp/vault/shamir"
 	"github.com/tuneinsight/lattigo/v5/ring"
-	"github.com/tuneinsight/lattigo/v5/utils/bignum"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 	"golang.org/x/crypto/sha3"
 )
@@ -27,6 +26,7 @@ const d = 5 // Length of joint noise vector
 const ell = 5
 const beta = 10
 const betaDelta = 10
+const kappa = 20
 
 func main() {
 	LogN := 10
@@ -593,45 +593,15 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 
-	lowNormSampler := newLowNormSampler(r)
-	poly := lowNormSampler.baseRing.NewPoly()
-
-	for i := range lowNormSampler.coeffs {
-		lowNormSampler.coeffs[i] = bignum.RandInt(prng, big.NewInt(beta))
+	ternaryParams := ring.Ternary{H: kappa}
+	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, true)
+	if err != nil {
+		log.Fatalf("Error creating ternary sampler: %v", err)
 	}
 
-	lowNormSampler.baseRing.AtLevel(poly.Level()).SetCoefficientsBigint(lowNormSampler.coeffs, poly)
+	c := ternarySampler.ReadNew()
 
-	return &poly
-}
-
-// Low norm sampler (taken from the VOLE example in LattiGo)
-type lowNormSampler struct {
-	baseRing *ring.Ring
-	coeffs   []*big.Int
-}
-
-func newLowNormSampler(baseRing *ring.Ring) (lns *lowNormSampler) {
-	lns = new(lowNormSampler)
-	lns.baseRing = baseRing
-	lns.coeffs = make([]*big.Int, baseRing.N())
-	return
-}
-
-// Samples a uniform polynomial in Z_{norm}/(X^N + 1)
-func (lns *lowNormSampler) newPolyLowNorm(norm *big.Int) (pol ring.Poly) {
-
-	pol = lns.baseRing.NewPoly()
-
-	prng, _ := sampling.NewPRNG()
-
-	for i := range lns.coeffs {
-		lns.coeffs[i] = bignum.RandInt(prng, norm)
-	}
-
-	lns.baseRing.AtLevel(pol.Level()).SetCoefficientsBigint(lns.coeffs, pol)
-
-	return
+	return &c
 }
 
 // RoundPolyCoefficientsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
