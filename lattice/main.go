@@ -12,6 +12,7 @@ import (
 
 	"github.com/hashicorp/vault/shamir"
 	"github.com/tuneinsight/lattigo/v5/ring"
+	"github.com/tuneinsight/lattigo/v5/utils/bignum"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 	"golang.org/x/crypto/sha3"
 )
@@ -23,6 +24,7 @@ const t = 3 // Active threshold
 const k = 5 // Total number of parties
 const d = 5 // Length of joint noise vector
 const ell = 5
+const beta = 10
 
 func main() {
 	LogN := 10
@@ -494,4 +496,102 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 		m_i[i] = &element
 	}
 	return m_i
+}
+
+// Hash to low norm ring elements
+func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu string) *ring.Poly {
+	hasher := sha3.NewShake128()
+
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+
+	// Handle matrix A
+	for _, row := range *A {
+		for _, poly := range row {
+			data, err := poly.MarshalBinary()
+			if err != nil {
+				log.Fatalf("Error marshalling poly: %v\n", err)
+			}
+			buffer.Write(data)
+		}
+	}
+
+	// Handle slice b
+	for _, poly := range b {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Handle slice h
+	for _, poly := range h {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Handle string mu
+	binary.Write(&buffer, binary.BigEndian, mu)
+
+	// Write the final concatenated data to the hasher
+	_, err := hasher.Write(buffer.Bytes())
+	if err != nil {
+		log.Fatalf("Error writing hash: %v\n", err)
+	}
+
+	hashOutputLength := n
+	hashOutput := make([]byte, hashOutputLength)
+	_, err = hasher.Read(hashOutput)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+
+	// Print the hash as a hexadecimal string
+	fmt.Printf("SHAKE128 Hash: %x\n", hashOutput)
+
+	prng, _ := sampling.NewKeyedPRNG(hashOutput)
+
+	lowNormSampler := newLowNormSampler(r)
+	poly := lowNormSampler.baseRing.NewPoly()
+
+	for i := range lowNormSampler.coeffs {
+		lowNormSampler.coeffs[i] = bignum.RandInt(prng, big.NewInt(beta))
+	}
+
+	lowNormSampler.baseRing.AtLevel(poly.Level()).SetCoefficientsBigint(lowNormSampler.coeffs, poly)
+
+	return &poly
+}
+
+// Low norm sampler (taken from the VOLE example in LattiGo)
+type lowNormSampler struct {
+	baseRing *ring.Ring
+	coeffs   []*big.Int
+}
+
+func newLowNormSampler(baseRing *ring.Ring) (lns *lowNormSampler) {
+	lns = new(lowNormSampler)
+	lns.baseRing = baseRing
+	lns.coeffs = make([]*big.Int, baseRing.N())
+	return
+}
+
+// Samples a uniform polynomial in Z_{norm}/(X^N + 1)
+func (lns *lowNormSampler) newPolyLowNorm(norm *big.Int) (pol ring.Poly) {
+
+	pol = lns.baseRing.NewPoly()
+
+	prng, _ := sampling.NewPRNG()
+
+	for i := range lns.coeffs {
+		lns.coeffs[i] = bignum.RandInt(prng, norm)
+	}
+
+	lns.baseRing.AtLevel(pol.Level()).SetCoefficientsBigint(lns.coeffs, pol)
+
+	return
 }
