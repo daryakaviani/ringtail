@@ -16,21 +16,22 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-const m = 5
-const n = 5
-const q = 11 // Prime
-const p = 7
-const t = 3 // Active threshold
-const k = 5 // Total number of parties
-const d = 5 // Length of joint noise vector
-const ell = 5
+const m = 2
+const n = 2
+const p = 7 // TODO: Experiment
+const t = 2 // Active threshold
+const k = 2 // Total number of parties
+const d = 2 // Length of joint noise vector
+const ell = 2
 const beta = 10
 const betaDelta = 10
-const kappa = 20
+const kappa = 10
+const logN = 3
+
+var q = uint64(101)
 
 func main() {
-	LogN := 10
-	r, _ := ring.NewRing(1<<LogN, ring.Qi60[:4])
+	r, _ := ring.NewRing(1<<logN, []uint64{q})
 	prng, _ := sampling.NewPRNG()
 	uniformSampler := ring.NewUniformSampler(prng, r)
 	trustedDealerKey := "Trusted dealer key"
@@ -49,15 +50,14 @@ func main() {
 	// Test signing round 1 by simulating each of the parties
 	mu := "Hello, Threshold Signature!"
 	sid := 1
-	numActiveParties := 4
 	D := make(map[int]*[][]*ring.Poly)
 	concatR := make(map[int]*[][]*ring.Poly)
 	m := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
-	T := []int{0, 1, 2, 3}
+	T := []int{0, 1}
 	lagrangeCoeffs := GenLagrangeCoefficients(r, T)
 
-	for i := 0; i < numActiveParties; i++ {
+	for i := 0; i < len(T); i++ {
 		D[i], m[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, (*skShares)[i], mu, []byte(PRFKey), seeds[i], T)
 	}
 
@@ -67,7 +67,7 @@ func main() {
 	// Testing signing round 2 by simulating each of the parties
 	z := make(map[int][]*ring.Poly)
 	c := make(map[int]*ring.Poly)
-	for i := 0; i < numActiveParties; i++ {
+	for i := 0; i < len(T); i++ {
 		z[i], c[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i], lagrangeCoeffs[i])
 	}
 
@@ -478,9 +478,6 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 		log.Fatalf("Error reading hash: %v\n", err)
 	}
 
-	// Print the hash as a hexadecimal string
-	fmt.Printf("SHAKE128 Hash: %x\n", hashOutput)
-
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 	gaussianParams := ring.DiscreteGaussian{}
 	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
@@ -521,9 +518,6 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 	if err != nil {
 		log.Fatalf("Error reading hash: %v\n", err)
 	}
-
-	// Print the hash as a hexadecimal string
-	fmt.Printf("SHAKE128 Hash: %x\n", hashOutput)
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 	prfUniformSampler := ring.NewUniformSampler(prng, r)
@@ -587,9 +581,6 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 	if err != nil {
 		log.Fatalf("Error reading hash: %v\n", err)
 	}
-
-	// Print the hash as a hexadecimal string
-	fmt.Printf("SHAKE128 Hash: %x\n", hashOutput)
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 
