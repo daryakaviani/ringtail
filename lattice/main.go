@@ -15,20 +15,23 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-const m = 5
-const n = 5
-const p = 2 // TODO: Experiment
-const t = 1 // Active threshold
-const k = 1 // Total number of parties
-const d = 5 // Length of joint noise vector
+const m = 20
+const n = 20
+const p = 2  // TODO: Experiment
+const t = 1  // Active threshold
+const k = 1  // Total number of parties
+const d = 20 // Length of joint noise vector
 const ell = 1
 const beta = 10
-const betaDelta = 10
+const betaDelta = 3291932728626317921
 const kappa = 10
 const logN = 3
+const sigma = 0
+const bound = 0
 
-// var q = uint64(61)
-var q = ring.Qi60[0]
+var q = uint64(61)
+
+// var q = ring.Qi60[0]
 
 func main() {
 	fmt.Print(q)
@@ -183,7 +186,7 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 // Function to generate the secret-shared polynomials
 func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
-	gaussianParams := ring.DiscreteGaussian{Sigma: 1000000, Bound: 100000}
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	// Sample the secret key from the ring
@@ -348,7 +351,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(skHash)
-	gaussianParams := ring.DiscreteGaussian{Sigma: 1000, Bound: 100000}
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	// Sample the error from the Gaussian distribution
@@ -370,7 +373,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	// Sample the E_i matrix
-	gaussianParams = ring.DiscreteGaussian{Sigma: 10000000, Bound: 100000}
+	gaussianParams = ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
 	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, true)
 	E_i := make([][]*ring.Poly, m)
 	for i := 0; i < m; i++ {
@@ -582,7 +585,7 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	gaussianParams := ring.DiscreteGaussian{Sigma: 1000000, Bound: 100000}
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
 	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	u_j := make([]*ring.Poly, d-1)
@@ -811,18 +814,21 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 
 	// Compute Az - bc
 	bc := make([]*ring.Poly, n)
+	Az_bc := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
 		newPoly := r.NewPoly()
 		bc[i] = &newPoly
+		newPoly = r.NewPoly()
+		Az_bc[i] = &newPoly
 		MulPoly(r, b[i], c, bc[i])
 
-		r.Sub(*Az[i], *bc[i], *Az[i]) // Az[i] - bc[i]
+		r.Sub(*Az[i], *bc[i], *Az_bc[i]) // Az[i] - bc[i]
 	}
 
-	fmt.Printf("Az - bc: %v\n", Az[0].Coeffs[0])
+	fmt.Printf("Az - bc: %v\n", Az_bc[0].Coeffs[0])
 
 	// Round Az - bc to the nearest multiple of p
-	for _, poly := range Az {
+	for _, poly := range Az_bc {
 		RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 
@@ -831,10 +837,7 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 	for i := range Delta {
 		newPoly := r.NewPoly()
 		Delta[i] = &newPoly
-	}
-
-	for i := range Delta {
-		r.Sub(*h[i], *Az[i], *Delta[i]) // Assuming az and h are adjusted to be arrays of same length as Delta
+		r.Sub(*h[i], *Az_bc[i], *Delta[i])
 	}
 
 	return Delta, z_sum
@@ -862,13 +865,13 @@ func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*rin
 		RoundCoeffsToNearestMultiple(r, computedH[i], p) // Round to nearest multiple of p
 	}
 
+	for i, poly := range computedH {
+		fmt.Printf("Computed h[%d]: %v\n", i, poly.Coeffs[0])
+	}
+
 	// TODO: Confirm
 	for j := range Delta {
 		r.Add(*computedH[j], *Delta[j], *computedH[j])
-	}
-
-	for i, poly := range computedH {
-		fmt.Printf("Computed h[%d]: %v\n", i, poly.Coeffs[0])
 	}
 
 	// Verify that c equals H_c([Az - bc]_p + Delta, mu)
@@ -880,31 +883,34 @@ func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*rin
 		return false
 	}
 
-	// // Verify that ||Delta||_inf <= betaDelta
-	// if !checkInfinityNorm(r, Delta, betaDelta) {
-	// 	return false
-	// }
-	// TODO: Add this part back
+	// Verify that ||Delta||_inf <= betaDelta
+	if !checkInfinityNorm(r, Delta, betaDelta) {
+		return false
+	}
 
 	return true
 }
 
-// checkInfinityNorm checks if the infinity norm of the polynomial Delta is less than or equal to betaDelta
-func checkInfinityNorm(r *ring.Ring, Delta *ring.Poly, betaDelta uint64) bool {
-	coeffsBigint := make([]*big.Int, Delta.N())
-	r.PolyToBigint(*Delta, 1, coeffsBigint)
-
-	// Calculate it here
+// checkInfinityNorm checks if the infinity norm of the vector of polynomial Delta is less than or equal to betaDelta
+func checkInfinityNorm(r *ring.Ring, Delta []*ring.Poly, betaDelta uint64) bool {
 	maxValue := big.NewInt(0) // Temporary variable to store the maximum value found
-	for _, coeff := range coeffsBigint {
-		absCoeff := new(big.Int).Abs(coeff) // Get the absolute value of the coefficient
-		if absCoeff.Cmp(maxValue) == 1 {    // Compare absCoeff with maxValue
-			maxValue.Set(absCoeff) // Update maxValue if absCoeff is greater
+
+	for _, poly := range Delta {
+		coeffsBigint := make([]*big.Int, poly.N())
+		r.PolyToBigint(*poly, 1, coeffsBigint)
+
+		for _, coeff := range coeffsBigint {
+			absCoeff := new(big.Int).Abs(coeff) // Get the absolute value of the coefficient
+			if absCoeff.Cmp(maxValue) == 1 {    // Compare absCoeff with maxValue
+				maxValue.Set(absCoeff) // Update maxValue if absCoeff is greater
+			}
 		}
 	}
 
 	// Convert betaDelta to big.Int for comparison
 	betaDeltaBig := new(big.Int).SetUint64(betaDelta)
+
+	log.Printf("Norm: %v", maxValue)
 
 	// Check if the maximum absolute value is less than or equal to betaDelta
 	return maxValue.Cmp(betaDeltaBig) <= 0
