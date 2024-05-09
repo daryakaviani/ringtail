@@ -15,12 +15,12 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-const m = 1
-const n = 1
-const p = 1 // TODO: Experiment
-const t = 1 // Active threshold
-const k = 1 // Total number of parties
-const d = 1 // Length of joint noise vector
+const m = 30
+const n = 30
+const p = 1  // TODO: Experiment
+const t = 1  // Active threshold
+const k = 1  // Total number of parties
+const d = 30 // Length of joint noise vector
 const ell = 1
 const beta = 10
 const betaDelta = 10
@@ -81,8 +81,9 @@ func main() {
 	T := []int{0}
 	// lagrangeCoeffs := GenLagrangeCoefficients(r, T)
 
-	for i := 0; i < len(T); i++ {
-		D[i], _, concatR[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[i], mu, []byte(PRFKey), seeds[i], T)
+	for i := 0; i < m; i++ {
+		D_i, _, R_i := SignRound1(r, uniformSampler, A, i, sid, skShares[0], mu, []byte(PRFKey), nil, T)
+		D[i], concatR[i] = D_i, R_i
 	}
 
 	fmt.Println("Matrix D:")
@@ -126,8 +127,8 @@ func main() {
 	c := make(map[int]*ring.Poly)
 	h := make(map[int][]*ring.Poly)
 
-	for i := 0; i < len(T); i++ {
-		z[i], c[i], h[i] = SignRound2(r, i, D, nil, A, b, skShares[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i], nil)
+	for i := 0; i < m; i++ {
+		z[i], c[i], h[i] = SignRound2(r, i, D, nil, A, b, skShares[0], sid, mu, T, []byte(PRFKey), seeds, concatR[i], nil)
 	}
 
 	// After computation in SignRound2
@@ -147,13 +148,13 @@ func main() {
 	// Aggregate the signature
 	// TODO: Update to take in only the local user's h value, this part is not broadcasted
 	Delta, sig := SignFinalize(r, z, nil, A, b, c[0], h[0])
-	fmt.Printf("Delta: %v\n", Delta.Coeffs[0])
+	fmt.Printf("Delta: %v\n", Delta[0].Coeffs[0])
 	fmt.Printf("z: %v\n", z[0][0].Coeffs[0])
 
 	// Verify the signature
 	valid := Verify(r, sig, A, mu, b, c[0], Delta, betaDelta)
 
-	fmt.Printf("Delta: %v\n", Delta.Coeffs[0])
+	fmt.Printf("Delta: %v\n", Delta[0].Coeffs[0])
 	fmt.Println("Signature:")
 	for i, poly := range sig {
 		fmt.Printf("sig[%d]: %v\n", i, poly.Coeffs[0])
@@ -182,7 +183,7 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 // Function to generate the secret-shared polynomials
 func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
-	gaussianParams := ring.DiscreteGaussian{}
+	gaussianParams := ring.DiscreteGaussian{Sigma: 5, Bound: 5}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	// Sample the secret key from the ring
@@ -347,7 +348,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(skHash)
-	gaussianParams := ring.DiscreteGaussian{}
+	gaussianParams := ring.DiscreteGaussian{Sigma: 5, Bound: 5}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	// Sample the error from the Gaussian distribution
@@ -369,7 +370,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	// Sample the E_i matrix
-	gaussianParams = ring.DiscreteGaussian{}
+	gaussianParams = ring.DiscreteGaussian{Sigma: 5, Bound: 5}
 	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, true)
 	E_i := make([][]*ring.Poly, m)
 	for i := 0; i < m; i++ {
@@ -428,16 +429,16 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 // Sign function signs a message using the secret key and returns the signature
 func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
 	// Create the noise matrix u
-	u := make([][]*ring.Poly, len(T))
+	u := make([][]*ring.Poly, m)
 	onePoly := r.NewMonomialXi(0)
 
-	for _, j := range T {
+	for j := 0; j < m; j++ {
 		oneSlice := []*ring.Poly{onePoly.CopyNew()}
 		u_j := H_u(r, A, b, sid, j, DMap, mu, mMap)
 		u[j] = append(oneSlice, u_j...)
 	}
 
-	h := make([]*ring.Poly, len(T))
+	h := make([]*ring.Poly, m)
 
 	for j, D_j := range DMap {
 		for i := 0; i < d; i++ {
@@ -448,6 +449,7 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 			for k := 0; k < m; k++ {
 				// Compute D_j[i][k] * u_j[k] mod q and add it to h[j][i]
 				tempPoly := r.NewPoly()
+
 				MulPoly(r, (*D_j)[i][k], u[j][k], &tempPoly)
 				r.Add(*h[j], tempPoly, *h[j])
 			}
@@ -460,6 +462,7 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	}
 	fmt.Println("Original h:")
 	for i, poly := range h {
+		fmt.Println(len(h))
 		fmt.Printf("Original h[%d]: %v\n", i, poly.Coeffs[0])
 	}
 	// c = H_c
@@ -579,7 +582,7 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	gaussianParams := ring.DiscreteGaussian{}
+	gaussianParams := ring.DiscreteGaussian{Sigma: 5, Bound: 5}
 	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	u_j := make([]*ring.Poly, d-1)
@@ -730,7 +733,7 @@ func RoundCoeffsToNearestMultiple(r *ring.Ring, poly *ring.Poly, p uint64) {
 }
 
 func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
-	lagrangePolynomials := make([]*ring.Poly, len(T))
+	lagrangePolynomials := make([]*ring.Poly, len(T)) // TODO: confirm len T
 
 	// For each index in T, we need to create a polynomial l_j(x) that is 1 at x_j and 0 at all other x_m in T
 	for j, xj := range T {
@@ -775,7 +778,7 @@ func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
 	return lagrangePolynomials
 }
 
-func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly, h []*ring.Poly) (*ring.Poly, []*ring.Poly) {
+func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly, h []*ring.Poly) ([]*ring.Poly, []*ring.Poly) {
 	// Initialize z_sum as an array of zero polynomials
 	z_sum := make([]*ring.Poly, n)
 	for i := range z_sum {
@@ -824,15 +827,20 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 	}
 
 	// Compute Δ = [h_p] - [Az - bc]_p
-	Delta := r.NewPoly() // Assuming h_p is defined or available, modify as required
-	for i, az := range Az {
-		r.Sub(*h[i], *az, Delta) // Δ -= Az[i] after rounding
+	Delta := make([]*ring.Poly, len(h)) // Assume hLength is the new defined length of vector h
+	for i := range Delta {
+		newPoly := r.NewPoly()
+		Delta[i] = &newPoly
 	}
 
-	return &Delta, z_sum
+	for i := range Delta {
+		r.Sub(*h[i], *Az[i], *Delta[i]) // Assuming az and h are adjusted to be arrays of same length as Delta
+	}
+
+	return Delta, z_sum
 }
 
-func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta *ring.Poly, betaDelta uint64) bool {
+func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta []*ring.Poly, betaDelta uint64) bool {
 	// Calculate [Az - bc]_p + Delta
 	computedH := make([]*ring.Poly, len(z))
 	for i := range computedH {
@@ -852,7 +860,11 @@ func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*rin
 		MulPoly(r, bi, c, bc[i])                         // Compute b_i * c
 		r.Sub(*computedH[i], *bc[i], *computedH[i])      // Compute Az_i - b_i*c
 		RoundCoeffsToNearestMultiple(r, computedH[i], p) // Round to nearest multiple of p
-		r.Add(*computedH[i], *Delta, *computedH[i])      // Add Delta
+	}
+
+	// TODO: Confirm
+	for j := range Delta {
+		r.Add(*computedH[j], *Delta[j], *computedH[j])
 	}
 
 	for i, poly := range computedH {
