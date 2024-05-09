@@ -20,7 +20,7 @@ const n = 1
 const p = 1 // TODO: Experiment
 const t = 1 // Active threshold
 const k = 1 // Total number of parties
-const d = 2 // Length of joint noise vector
+const d = 1 // Length of joint noise vector
 const ell = 1
 const beta = 10
 const betaDelta = 10
@@ -59,37 +59,30 @@ func main() {
 	skShares := make([][]*ring.Poly, 1)
 	skShares[0] = skShare
 
-	fmt.Println("Seeds:")
-	for i, seedRow := range seeds {
-		for j, seed := range seedRow {
-			fmt.Printf("Seed[%d][%d]: %x\n", i, j, seed) // Printing bytes as hex
-		}
-	}
+	// fmt.Println("Seeds:")
+	// for i, seedRow := range seeds {
+	// 	for j, seed := range seedRow {
+	// 		fmt.Printf("Seed[%d][%d]: %x\n", i, j, seed) // Printing bytes as hex
+	// 	}
+	// }
 
 	fmt.Println("Vector b:")
 	for i, poly := range b {
 		fmt.Printf("b[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
 	}
 
-	poly := r.NewPoly()
-	MulPoly(r, (*A)[0][0], skShare[0], &poly)
-	fmt.Printf("TESTING TESTING: %v", poly)
-
 	// Test signing round 1 by simulating each of the parties
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	D := make(map[int]*[][]*ring.Poly)
 	concatR := make(map[int]*[][]*ring.Poly)
-	m := make(map[int][]*ring.Poly)
+	// m := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
 	T := []int{0}
 	// lagrangeCoeffs := GenLagrangeCoefficients(r, T)
 
-	newPoly := r.NewPoly()
-	MulPoly(r, (*A)[0][0], skShares[0][0], &newPoly)
-
 	for i := 0; i < len(T); i++ {
-		D[i], m[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[i], mu, []byte(PRFKey), seeds[i], T)
+		D[i], _, concatR[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[i], mu, []byte(PRFKey), seeds[i], T)
 	}
 
 	fmt.Println("Matrix D:")
@@ -103,13 +96,13 @@ func main() {
 		}
 	}
 
-	fmt.Println("Mask m:")
-	for key, polys := range m {
-		fmt.Printf("m[%d]:\n", key)
-		for i, poly := range polys {
-			fmt.Printf("\tPoly %d: %v\n", i, poly.Coeffs[0]) // Print coefficients of each polynomial
-		}
-	}
+	// fmt.Println("Mask m:")
+	// for key, polys := range m {
+	// 	fmt.Printf("m[%d]:\n", key)
+	// 	for i, poly := range polys {
+	// 		fmt.Printf("\tPoly %d: %v\n", i, poly.Coeffs[0]) // Print coefficients of each polynomial
+	// 	}
+	// }
 
 	fmt.Println("Concatenated R:")
 	for key, matrix := range concatR {
@@ -122,11 +115,19 @@ func main() {
 		}
 	}
 
+	// // Test of D
+	// fmt.Println("TEST OF D MATRIX")
+	// newPoly := r.NewPoly()
+	// MulPoly(r, (*A)[0][0], (*concatR[0])[0][0], &newPoly)
+	// fmt.Printf("D test: %v", newPoly)
+
 	// Testing signing round 2 by simulating each of the parties
 	z := make(map[int][]*ring.Poly)
 	c := make(map[int]*ring.Poly)
+	h := make(map[int][]*ring.Poly)
+
 	for i := 0; i < len(T); i++ {
-		z[i], c[i] = SignRound2(r, i, D, m, A, b, skShares[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i], nil)
+		z[i], c[i], h[i] = SignRound2(r, i, D, nil, A, b, skShares[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i], nil)
 	}
 
 	// After computation in SignRound2
@@ -134,18 +135,20 @@ func main() {
 	for i, polys := range z {
 		fmt.Printf("z[%d]:\n", i)
 		for j, poly := range polys {
-			fmt.Printf("\tPoly %d: %v\n", j, poly.Coeffs[0]) // Print coefficients of each polynomial
+			fmt.Printf("\tZ %d: %v\n", j, poly.Coeffs[0]) // Print coefficients of each polynomial
 		}
 	}
 
-	fmt.Printf("Poly c:\n")
+	fmt.Printf("c:\n")
 	for i, poly := range c {
 		fmt.Printf("\tc[%d]: %v\n", i, poly.Coeffs[0]) // Print the polynomial's coefficients
 	}
 
 	// Aggregate the signature
-	Delta, sig := SignFinalize(r, z, m, A, b, c[0])
-	fmt.Print(Delta, sig)
+	// TODO: Update to take in only the local user's h value, this part is not broadcasted
+	Delta, sig := SignFinalize(r, z, nil, A, b, c[0], h[0])
+	fmt.Printf("Delta: %v\n", Delta.Coeffs[0])
+	fmt.Printf("z: %v\n", z[0][0].Coeffs[0])
 
 	// Verify the signature
 	valid := Verify(r, sig, A, mu, b, c[0], Delta, betaDelta)
@@ -263,8 +266,6 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		// }
 	}
 
-	fmt.Println("sharesCoeffs: ", s)
-
 	// // Produce secret-shared elements
 	// skShares := make([][]*ring.Poly, k)
 	// for l := 0; l < k; l++ {
@@ -301,20 +302,20 @@ func generateRandomSeed() []byte {
 
 // Sign function signs a message using the secret key and returns the signature
 func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare []*ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly, *[][]*ring.Poly) {
-	// Generate the row-wise mask from PRFs
-	m_i := make([]*ring.Poly, n)
-	for i := 0; i < n; i++ {
-		newPoly := r.NewPoly()
-		m_i[i] = &newPoly
-	}
+	// // Generate the row-wise mask from PRFs
+	// m_i := make([]*ring.Poly, n)
+	// for i := 0; i < n; i++ {
+	// 	newPoly := r.NewPoly()
+	// 	m_i[i] = &newPoly
+	// }
 
-	for _, j := range T {
-		sd_ij := seeds_i[j]
-		m_ij := PRF(r, sid, sd_ij, PRFKey)
-		for k := 0; k < n; k++ {
-			r.Add(*m_i[k], *m_ij[k], *m_i[k])
-		}
-	}
+	// for _, j := range T {
+	// 	sd_ij := seeds_i[j]
+	// 	m_ij := PRF(r, sid, sd_ij, PRFKey)
+	// 	for k := 0; k < n; k++ {
+	// 		r.Add(*m_i[k], *m_ij[k], *m_i[k])
+	// 	}
+	// }
 
 	// Sample the error from the Gaussian distribution
 	r_star := make([]*ring.Poly, n)
@@ -400,6 +401,11 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		concatenatedE[i] = append([]*ring.Poly{e_star[i]}, E_i[i]...)
 	}
 
+	fmt.Printf("concatenated E:\n")
+	for i, poly := range concatenatedE[0] {
+		fmt.Printf("\tE[%d]: %v\n", i, poly.Coeffs[0])
+	}
+
 	// Compute D_i = A(concatenatedR) + concatenatedE
 	for i := 0; i < m; i++ {
 		for j := 0; j < d; j++ {
@@ -416,11 +422,11 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		}
 	}
 
-	return &D_i, m_i, &concatenatedR
+	return &D_i, nil, &concatenatedR
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly) {
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
 	// Create the noise matrix u
 	u := make([][]*ring.Poly, len(T))
 	onePoly := r.NewMonomialXi(0)
@@ -459,19 +465,19 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	// c = H_c
 	c := H_c(r, A, b, h, mu)
 
-	// Compute the column-wise mask from PRFs
-	m_i_prime := make([]*ring.Poly, n)
-	for i := 0; i < n; i++ {
-		newPoly := r.NewPoly()
-		m_i_prime[i] = &newPoly
-	}
-	for _, j := range T {
-		sd_ji := seeds[j][partyInt]
-		m_ij := PRF(r, sid, sd_ji, PRFKey)
-		for k := 0; k < n; k++ {
-			r.Add(*m_i_prime[k], *m_ij[k], *m_i_prime[k])
-		}
-	}
+	// // Compute the column-wise mask from PRFs
+	// m_i_prime := make([]*ring.Poly, n)
+	// for i := 0; i < n; i++ {
+	// 	newPoly := r.NewPoly()
+	// 	m_i_prime[i] = &newPoly
+	// }
+	// for _, j := range T {
+	// 	sd_ji := seeds[j][partyInt]
+	// 	m_ij := PRF(r, sid, sd_ji, PRFKey)
+	// 	for k := 0; k < n; k++ {
+	// 		r.Add(*m_i_prime[k], *m_ij[k], *m_i_prime[k])
+	// 	}
+	// }
 
 	// Compute z_i as a vector of ring.Poly
 	z_i := make([]*ring.Poly, len(s_i))
@@ -490,13 +496,13 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 		}
 
 		// Combine all terms
-		r.Add(finalPoly, weightedSum, finalPoly)          // Add weightedSum to (s_i_elem * c) * lambda_T_i
-		r.Add(finalPoly, *m_i_prime[partyInt], finalPoly) // Add m_i_prime[partyInt] to the finalPoly
+		r.Add(finalPoly, weightedSum, finalPoly) // Add weightedSum to (s_i_elem * c) * lambda_T_i
+		// r.Add(finalPoly, *m_i_prime[partyInt], finalPoly) // Add m_i_prime[partyInt] to the finalPoly
 
 		z_i[index] = &finalPoly
 	}
 
-	return z_i, c
+	return z_i, c, h
 }
 
 // Hash parameters to a Gaussian distribution
@@ -769,7 +775,7 @@ func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
 	return lagrangePolynomials
 }
 
-func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly) (*ring.Poly, []*ring.Poly) {
+func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly, h []*ring.Poly) (*ring.Poly, []*ring.Poly) {
 	// Initialize z_sum as an array of zero polynomials
 	z_sum := make([]*ring.Poly, n)
 	for i := range z_sum {
@@ -778,10 +784,10 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 	}
 
 	// Compute z_sum = Σ(z_j - m_j) mod q
-	for party, z_j := range z { // Looping through each z_j
-		m_j := m[party]
+	for _, z_j := range z { // Looping through each z_j
+		// m_j := m[party]
 		for i := 0; i < n; i++ {
-			r.Sub(*z_j[i], *m_j[i], *z_j[i])     // z_j[i] - m_j[i] mod q
+			// r.Sub(*z_j[i], *m_j[i], *z_j[i])     // z_j[i] - m_j[i] mod q
 			r.Add(*z_sum[i], *z_j[i], *z_sum[i]) // Accumulate the result
 		}
 	}
@@ -798,6 +804,8 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 		}
 	}
 
+	fmt.Printf("Az: %v\n", Az[0].Coeffs[0])
+
 	// Compute Az - bc
 	bc := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
@@ -808,6 +816,8 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 		r.Sub(*Az[i], *bc[i], *Az[i]) // Az[i] - bc[i]
 	}
 
+	fmt.Printf("Az - bc: %v\n", Az[0].Coeffs[0])
+
 	// Round Az - bc to the nearest multiple of p
 	for _, poly := range Az {
 		RoundCoeffsToNearestMultiple(r, poly, p)
@@ -815,8 +825,8 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 
 	// Compute Δ = [h_p] - [Az - bc]_p
 	Delta := r.NewPoly() // Assuming h_p is defined or available, modify as required
-	for _, az := range Az {
-		r.Sub(Delta, *az, Delta) // Δ -= Az[i] after rounding
+	for i, az := range Az {
+		r.Sub(*h[i], *az, Delta) // Δ -= Az[i] after rounding
 	}
 
 	return &Delta, z_sum
@@ -845,7 +855,6 @@ func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*rin
 		r.Add(*computedH[i], *Delta, *computedH[i])      // Add Delta
 	}
 
-	fmt.Println("Computed h:")
 	for i, poly := range computedH {
 		fmt.Printf("Computed h[%d]: %v\n", i, poly.Coeffs[0])
 	}
@@ -888,18 +897,6 @@ func checkInfinityNorm(r *ring.Ring, Delta *ring.Poly, betaDelta uint64) bool {
 	// Check if the maximum absolute value is less than or equal to betaDelta
 	return maxValue.Cmp(betaDeltaBig) <= 0
 }
-
-// // Sets p3 = p1 * p2 by first converting into NTT, using montgomery multiplication, and then converting out of NTT with INTT
-// func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
-// 	r.NTT(*p1, *p1)
-// 	r.NTT(*p2, *p2)
-// 	r.NTT(*p3, *p3)
-// 	r.MulCoeffsMontgomery(*p1, *p2, *p3)
-// 	r.INTT(*p1, *p1)
-// 	r.INTT(*p2, *p2)
-// 	r.INTT(*p3, *p3)
-// 	// fmt.Printf("New multiplied polynomial: %v\\", p3)
-// }
 
 // TODO: Make this general to other rings which are larger
 // polyMultInCyclotomicRing multiplies two polynomials within the cyclotomic ring x^8 + 1 and returns the result.
@@ -946,3 +943,15 @@ func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 
 	r.SetCoefficientsBigint(result, *p3)
 }
+
+// // Sets p3 = p1 * p2 by first converting into NTT, using montgomery multiplication, and then converting out of NTT with INTT
+// func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
+// 	r.NTT(*p1, *p1)
+// 	r.NTT(*p2, *p2)
+// 	r.NTT(*p3, *p3)
+// 	r.MulCoeffsMontgomery(*p1, *p2, *p3)
+// 	r.INTT(*p1, *p1)
+// 	r.INTT(*p2, *p2)
+// 	r.INTT(*p3, *p3)
+// 	// fmt.Printf("New multiplied polynomial: %v\\", p3)
+// }
