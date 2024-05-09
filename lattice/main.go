@@ -18,7 +18,7 @@ import (
 
 const m = 2
 const n = 2
-const p = 7 // TODO: Experiment
+const p = 2 // TODO: Experiment
 const t = 2 // Active threshold
 const k = 2 // Total number of parties
 const d = 2 // Length of joint noise vector
@@ -28,24 +28,45 @@ const betaDelta = 10
 const kappa = 10
 const logN = 3
 
-var q = uint64(101)
+var q = uint64(61)
 
 func main() {
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
-	prng, _ := sampling.NewPRNG()
+	prng, _ := sampling.NewKeyedPRNG([]byte("0")) // TODO: Change to random key for the PRNG seeing
 	uniformSampler := ring.NewUniformSampler(prng, r)
 	trustedDealerKey := "Trusted dealer key"
 
 	// Setup
 	A := Setup(uniformSampler)
 
-	fmt.Println("A: ", A)
+	fmt.Println("Matrix A:")
+	for i, row := range *A {
+		for j, poly := range row {
+			fmt.Printf("A[%d][%d]: %v\n", i, j, poly.Coeffs[0]) // Accessing the underlying slice
+		}
+	}
 
 	// Gen
 	skShares, seeds, b := Gen(r, A, uniformSampler, []byte(trustedDealerKey))
 
-	fmt.Println("Shares: ", skShares)
-	fmt.Println("Seeds: ", seeds)
+	fmt.Println("Secret Key Shares (skShares):")
+	for i, shareRow := range *skShares {
+		for j, poly := range shareRow {
+			fmt.Printf("skShares[%d][%d]: %v\n", i, j, poly.Coeffs[0]) // Accessing the underlying slice
+		}
+	}
+
+	fmt.Println("Seeds:")
+	for i, seedRow := range seeds {
+		for j, seed := range seedRow {
+			fmt.Printf("Seed[%d][%d]: %x\n", i, j, seed) // Printing bytes as hex
+		}
+	}
+
+	fmt.Println("Vector b:")
+	for i, poly := range b {
+		fmt.Printf("b[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
+	}
 
 	// Test signing round 1 by simulating each of the parties
 	mu := "Hello, Threshold Signature!"
@@ -61,8 +82,35 @@ func main() {
 		D[i], m[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, (*skShares)[i], mu, []byte(PRFKey), seeds[i], T)
 	}
 
-	fmt.Println("D: ", D)
-	fmt.Println("m: ", m)
+	fmt.Println("Matrix D:")
+	for key, matrix := range D {
+		fmt.Printf("D[%d]:\n", key)
+		for i, row := range *matrix {
+			fmt.Printf("\tRow %d:\n", i)
+			for j, poly := range row {
+				fmt.Printf("\t\tD[%d][%d]: %v\n", i, j, poly.Coeffs[0]) // Print each poly's coefficients
+			}
+		}
+	}
+
+	fmt.Println("Mask m:")
+	for key, polys := range m {
+		fmt.Printf("m[%d]:\n", key)
+		for i, poly := range polys {
+			fmt.Printf("\tPoly %d: %v\n", i, poly.Coeffs[0]) // Print coefficients of each polynomial
+		}
+	}
+
+	fmt.Println("Concatenated R:")
+	for key, matrix := range concatR {
+		fmt.Printf("concatR[%d]:\n", key)
+		for i, row := range *matrix {
+			fmt.Printf("\tRow %d:\n", i)
+			for j, poly := range row {
+				fmt.Printf("\t\tconcatR[%d][%d]: %v\n", i, j, poly.Coeffs[0]) // Print each poly's coefficients
+			}
+		}
+	}
 
 	// Testing signing round 2 by simulating each of the parties
 	z := make(map[int][]*ring.Poly)
@@ -71,12 +119,33 @@ func main() {
 		z[i], c[i] = SignRound2(r, i, D, m, A, b, (*skShares)[i], sid, mu, T, []byte(PRFKey), seeds, concatR[i], lagrangeCoeffs[i])
 	}
 
+	// After computation in SignRound2
+	fmt.Println("Z Vector:")
+	for i, polys := range z {
+		fmt.Printf("z[%d]:\n", i)
+		for j, poly := range polys {
+			fmt.Printf("\tPoly %d: %v\n", j, poly.Coeffs[0]) // Print coefficients of each polynomial
+		}
+	}
+
+	fmt.Printf("Poly c:\n")
+	for i, poly := range c {
+		fmt.Printf("\tc[%d]: %v\n", i, poly.Coeffs[0]) // Print the polynomial's coefficients
+	}
+
 	// Aggregate the signature
 	Delta, sig := SignFinalize(r, z, m, A, b, c[0])
 	fmt.Print(Delta, sig)
 
 	// Verify the signature
 	valid := Verify(r, sig, A, mu, b, c[0], Delta, betaDelta)
+
+	fmt.Printf("Delta: %v\n", Delta.Coeffs[0])
+	fmt.Println("Signature:")
+	for i, poly := range sig {
+		fmt.Printf("sig[%d]: %v\n", i, poly.Coeffs[0])
+	}
+
 	fmt.Printf("Signature Verification Result: %v\n", valid)
 }
 
@@ -111,7 +180,10 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		s[i] = &element
 	}
 
-	fmt.Println("s: ", s)
+	fmt.Println("Vector s:")
+	for i, poly := range s {
+		fmt.Printf("s[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
+	}
 
 	// Sample the error from the Gaussian distribution
 	e := make([]*ring.Poly, m)
@@ -121,7 +193,10 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		e[i] = &element
 	}
 
-	fmt.Println("e: ", e)
+	fmt.Println("Vector e:")
+	for i, poly := range e {
+		fmt.Printf("e[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
+	}
 
 	// Initialize result vector
 	b := make([]*ring.Poly, m)
@@ -141,8 +216,6 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		// Add e[i] to b[i] mod q
 		r.Add(*b[i], *e[i], *b[i])
 	}
-
-	fmt.Println("b: ", b)
 
 	// Secret-share s
 	sharesCoeffs := make([][][]*big.Int, k)
