@@ -15,12 +15,12 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-const m = 30
-const n = 30
-const p = 1  // TODO: Experiment
-const t = 1  // Active threshold
-const k = 1  // Total number of parties
-const d = 30 // Length of joint noise vector
+const m = 5
+const n = 5
+const p = 2 // TODO: Experiment
+const t = 1 // Active threshold
+const k = 1 // Total number of parties
+const d = 5 // Length of joint noise vector
 const ell = 1
 const beta = 10
 const betaDelta = 10
@@ -59,12 +59,12 @@ func main() {
 	skShares := make([][]*ring.Poly, 1)
 	skShares[0] = skShare
 
-	// fmt.Println("Seeds:")
-	// for i, seedRow := range seeds {
-	// 	for j, seed := range seedRow {
-	// 		fmt.Printf("Seed[%d][%d]: %x\n", i, j, seed) // Printing bytes as hex
-	// 	}
-	// }
+	fmt.Println("Seeds:")
+	for i, seedRow := range seeds {
+		for j, seed := range seedRow {
+			fmt.Printf("Seed[%d][%d]: %x\n", i, j, seed) // Printing bytes as hex
+		}
+	}
 
 	fmt.Println("Vector b:")
 	for i, poly := range b {
@@ -76,14 +76,14 @@ func main() {
 	sid := 1
 	D := make(map[int]*[][]*ring.Poly)
 	concatR := make(map[int]*[][]*ring.Poly)
-	// m := make(map[int][]*ring.Poly)
+	mask := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
 	T := []int{0}
 	// lagrangeCoeffs := GenLagrangeCoefficients(r, T)
 
 	for i := 0; i < m; i++ {
-		D_i, _, R_i := SignRound1(r, uniformSampler, A, i, sid, skShares[0], mu, []byte(PRFKey), nil, T)
-		D[i], concatR[i] = D_i, R_i
+		// TODO: Change this to be a different seed per user pair
+		D[i], mask[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[0], mu, []byte(PRFKey), seeds[0], T)
 	}
 
 	fmt.Println("Matrix D:")
@@ -97,13 +97,13 @@ func main() {
 		}
 	}
 
-	// fmt.Println("Mask m:")
-	// for key, polys := range m {
-	// 	fmt.Printf("m[%d]:\n", key)
-	// 	for i, poly := range polys {
-	// 		fmt.Printf("\tPoly %d: %v\n", i, poly.Coeffs[0]) // Print coefficients of each polynomial
-	// 	}
-	// }
+	fmt.Println("Mask m:")
+	for key, polys := range mask {
+		fmt.Printf("m[%d]:\n", key)
+		for i, poly := range polys {
+			fmt.Printf("\tPoly %d: %v\n", i, poly.Coeffs[0]) // Print coefficients of each polynomial
+		}
+	}
 
 	fmt.Println("Concatenated R:")
 	for key, matrix := range concatR {
@@ -147,7 +147,7 @@ func main() {
 
 	// Aggregate the signature
 	// TODO: Update to take in only the local user's h value, this part is not broadcasted
-	Delta, sig := SignFinalize(r, z, nil, A, b, c[0], h[0])
+	Delta, sig := SignFinalize(r, z, mask, A, b, c[0], h[0])
 	fmt.Printf("Delta: %v\n", Delta[0].Coeffs[0])
 	fmt.Printf("z: %v\n", z[0][0].Coeffs[0])
 
@@ -183,7 +183,7 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 // Function to generate the secret-shared polynomials
 func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
-	gaussianParams := ring.DiscreteGaussian{Sigma: 5, Bound: 5}
+	gaussianParams := ring.DiscreteGaussian{Sigma: 1000000, Bound: 100000}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	// Sample the secret key from the ring
@@ -303,20 +303,20 @@ func generateRandomSeed() []byte {
 
 // Sign function signs a message using the secret key and returns the signature
 func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare []*ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly, *[][]*ring.Poly) {
-	// // Generate the row-wise mask from PRFs
-	// m_i := make([]*ring.Poly, n)
-	// for i := 0; i < n; i++ {
-	// 	newPoly := r.NewPoly()
-	// 	m_i[i] = &newPoly
-	// }
+	// Generate the row-wise mask from PRFs
+	mask := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		newPoly := r.NewPoly()
+		mask[i] = &newPoly
+	}
 
-	// for _, j := range T {
-	// 	sd_ij := seeds_i[j]
-	// 	m_ij := PRF(r, sid, sd_ij, PRFKey)
-	// 	for k := 0; k < n; k++ {
-	// 		r.Add(*m_i[k], *m_ij[k], *m_i[k])
-	// 	}
-	// }
+	for _, j := range T {
+		sd_ij := seeds_i[j]
+		mask_j := PRF(r, sid, sd_ij, PRFKey)
+		for k := 0; k < n; k++ {
+			r.Add(*mask[k], *mask_j[k], *mask[k])
+		}
+	}
 
 	// Sample the error from the Gaussian distribution
 	r_star := make([]*ring.Poly, n)
@@ -348,7 +348,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(skHash)
-	gaussianParams := ring.DiscreteGaussian{Sigma: 5, Bound: 5}
+	gaussianParams := ring.DiscreteGaussian{Sigma: 1000, Bound: 100000}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	// Sample the error from the Gaussian distribution
@@ -370,7 +370,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	// Sample the E_i matrix
-	gaussianParams = ring.DiscreteGaussian{Sigma: 5, Bound: 5}
+	gaussianParams = ring.DiscreteGaussian{Sigma: 10000000, Bound: 100000}
 	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, true)
 	E_i := make([][]*ring.Poly, m)
 	for i := 0; i < m; i++ {
@@ -423,7 +423,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		}
 	}
 
-	return &D_i, nil, &concatenatedR
+	return &D_i, mask, &concatenatedR
 }
 
 // Sign function signs a message using the secret key and returns the signature
@@ -469,16 +469,16 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	c := H_c(r, A, b, h, mu)
 
 	// // Compute the column-wise mask from PRFs
-	// m_i_prime := make([]*ring.Poly, n)
+	// mask_prime := make([]*ring.Poly, n)
 	// for i := 0; i < n; i++ {
 	// 	newPoly := r.NewPoly()
-	// 	m_i_prime[i] = &newPoly
+	// 	mask_prime[i] = &newPoly
 	// }
 	// for _, j := range T {
 	// 	sd_ji := seeds[j][partyInt]
-	// 	m_ij := PRF(r, sid, sd_ji, PRFKey)
+	// 	mask_j_prime := PRF(r, sid, sd_ji, PRFKey)
 	// 	for k := 0; k < n; k++ {
-	// 		r.Add(*m_i_prime[k], *m_ij[k], *m_i_prime[k])
+	// 		r.Add(*mask_prime[k], *mask_j_prime[k], *mask_prime[k])
 	// 	}
 	// }
 
@@ -500,7 +500,7 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 
 		// Combine all terms
 		r.Add(finalPoly, weightedSum, finalPoly) // Add weightedSum to (s_i_elem * c) * lambda_T_i
-		// r.Add(finalPoly, *m_i_prime[partyInt], finalPoly) // Add m_i_prime[partyInt] to the finalPoly
+		// r.Add(finalPoly, *mask_prime[partyInt], finalPoly) // Add mask_prime[partyInt] to the finalPoly
 
 		z_i[index] = &finalPoly
 	}
@@ -582,7 +582,7 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	gaussianParams := ring.DiscreteGaussian{Sigma: 5, Bound: 5}
+	gaussianParams := ring.DiscreteGaussian{Sigma: 1000000, Bound: 100000}
 	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	u_j := make([]*ring.Poly, d-1)
@@ -627,12 +627,12 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 	prfUniformSampler := ring.NewUniformSampler(prng, r)
 
-	m_i := make([]*ring.Poly, n)
+	mask := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
 		element := prfUniformSampler.ReadNew()
-		m_i[i] = &element
+		mask[i] = &element
 	}
-	return m_i
+	return mask
 }
 
 // Hash to low norm ring elements
@@ -788,9 +788,9 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 
 	// Compute z_sum = Σ(z_j - m_j) mod q
 	for _, z_j := range z { // Looping through each z_j
-		// m_j := m[party]
+		// mask_j := m[j]
 		for i := 0; i < n; i++ {
-			// r.Sub(*z_j[i], *m_j[i], *z_j[i])     // z_j[i] - m_j[i] mod q
+			// r.Sub(*z_j[i], *mask_j[i], *z_j[i])  // z_j[i] - m_j[i] mod q
 			r.Add(*z_sum[i], *z_j[i], *z_sum[i]) // Accumulate the result
 		}
 	}
