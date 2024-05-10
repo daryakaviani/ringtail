@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	m = 20
-	n = 20
+	m = 5
+	n = 5
 	// q       = uint64(61) // Modulo parameter
-	p       = 5
-	e_bound = 0 // Keep these as 0 for now!
-	sigma_e = 0 // Standard deviation for the error distribution
-	sigma_c = 2 // Standard deviation for the hash output distribution
+	p       = 100
+	e_bound = 0.5 // Keep these as 0 for now!
+	sigma_e = 2   // Standard deviation for the error distribution
+	sigma_c = 2   // Standard deviation for the hash output distribution
 	c_bound = 3
 	logN    = 3
 	kappa   = 10
@@ -32,7 +32,7 @@ func main() {
 	prng, _ := sampling.NewKeyedPRNG([]byte("0"))
 	uniformSampler := ring.NewUniformSampler(prng, r)
 	gaussianParams := ring.DiscreteGaussian{Sigma: sigma_e, Bound: e_bound}
-	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	// Setup
 	A := BCMSetup(r, uniformSampler)
@@ -105,6 +105,8 @@ func BCMGen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler
 		newPoly := gaussianSampler.ReadNew()
 		e[i] = &newPoly
 	}
+
+	PrintVector("e: ", e)
 
 	b := make([]*ring.Poly, m)
 	MatrixVectorMul(r, A, s, b)
@@ -197,7 +199,7 @@ func H(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu strin
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 	gaussianParams := ring.DiscreteGaussian{Sigma: sigma_c, Bound: c_bound}
-	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	c := hashGaussiamSampler.ReadNew()
 
