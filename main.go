@@ -18,12 +18,12 @@ import (
 
 // PARAMETERS
 const (
-	m         = 1
-	n         = 1
+	m         = 5
+	n         = 5
 	p         = 2 // TODO: Experiment
 	t         = 1 // Active threshold
 	k         = 1 // Total number of parties
-	d         = 1 // Length of joint noise vector
+	d         = 5 // Length of joint noise vector
 	ell       = 1
 	beta      = 10
 	betaDelta = 3291932728626317921
@@ -41,7 +41,8 @@ const (
 	sigmaU    = 2
 )
 
-var q = uint64(61)
+// var q = uint64(61)
+var q = ring.Qi60[0]
 
 func main() {
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
@@ -67,7 +68,7 @@ func main() {
 
 	utils.PrintVector("b: ", b)
 
-	// Test signing round 1 by simulating each of the parties
+	// ROUND 1
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	D := make(map[int]*[][]*ring.Poly)
@@ -92,14 +93,12 @@ func main() {
 		utils.PrintMatrix("concatR_"+fmt.Sprint(key), matrix)
 	}
 
-	// Testing signing round 2 by simulating each of the parties
+	// ROUND 2
 	z := make(map[int][]*ring.Poly)
 	c := make(map[int]*ring.Poly)
 	h := make(map[int][]*ring.Poly)
 
-	for i := 0; i < m; i++ {
-		z[i], c[i], h[i] = SignRound2(r, i, D, nil, A, b, skShares[0], sid, mu, T, []byte(PRFKey), (*seeds)[i], concatR[i], nil)
-	}
+	z[partyInt], c[partyInt], h[partyInt] = SignRound2(r, partyInt, D, mask, A, b, skShares[0], sid, mu, T, []byte(PRFKey), seeds, concatR[partyInt], nil)
 
 	// After computation in SignRound2
 	for i, polys := range z {
@@ -236,19 +235,12 @@ func generateRandomSeed() []byte {
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare []*ring.Poly, mu string, PRFKey []byte, seeds_i [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly, *[][]*ring.Poly) {
+func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare []*ring.Poly, mu string, PRFKey []byte, seeds [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly, *[][]*ring.Poly) {
 	// Generate the row-wise mask from PRFs
 	mask := make([]*ring.Poly, n)
-	for i := 0; i < n; i++ {
-		newPoly := r.NewPoly()
-		mask[i] = &newPoly
-	}
 	for _, j := range T {
-		sd_ij := seeds_i[j]
-		mask_j := PRF(r, sid, sd_ij, PRFKey)
-		for k := 0; k < n; k++ {
-			r.Add(*mask[k], *mask_j[k], *mask[k])
-		}
+		mask_j := PRF(r, sid, seeds[j], PRFKey)
+		utils.VectorAdd(r, mask, mask_j, mask)
 	}
 
 	// Sample r*
@@ -290,6 +282,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 			E_i[i][j] = &element
 		}
 	}
+	// TODO: Make a util function for sampling a new matrix or vector
 
 	// Concatenate r_i_star with R_i, and e_i_star with E_i
 	concatenatedR := make([][]*ring.Poly, n)
@@ -312,421 +305,91 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
-	// // Create the noise matrix u
-	// u := make([][]*ring.Poly, m)
-	// onePoly := r.NewMonomialXi(0)
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds *map[int][][]byte, concatR *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
+	// Create the noise vectors u
+	u := make(map[int][]*ring.Poly, d)
+	onePoly := r.NewMonomialXi(0)
 
-	// for j := 0; j < m; j++ {
-	// 	oneSlice := []*ring.Poly{onePoly.CopyNew()}
-	// 	u_j := H_u(r, A, b, sid, j, DMap, mu, mMap)
-	// 	u[j] = append(oneSlice, u_j...)
-	// }
-	// Create the noise matrix u, now simplified to use onePoly for all elements
-	u := make([][]*ring.Poly, m)
-	onePoly := r.NewMonomialXi(0) // Assumes onePoly is defined as a monomial of degree 0 (constant polynomial of 1)
-
-	for j := 0; j < m; j++ {
-		u[j] = make([]*ring.Poly, d) // Ensure u[j] has d entries
-		for k := 0; k < d; k++ {
-			u[j][k] = onePoly.CopyNew() // Each entry of u is just a copy of onePoly
+	for _, j := range T {
+		oneSlice := []*ring.Poly{onePoly.CopyNew()}
+		if d > 1 {
+			u_j := H_u(r, A, b, sid, j, DMap, mu, mMap)
+			u[j] = append(oneSlice, u_j...)
 		}
 	}
 
 	h := make([]*ring.Poly, m)
 
 	for j, D_j := range DMap {
-		for i := 0; i < d; i++ {
-			newPoly := r.NewPoly()
-			h[j] = &newPoly
-
-			// Compute D_j * u_j for row i
-			for k := 0; k < m; k++ {
-				// Compute D_j[i][k] * u_j[k] mod q and add it to h[j][i]
-				tempPoly := r.NewPoly()
-
-				utils.MulPoly(r, (*D_j)[i][k], u[j][k], &tempPoly)
-				r.Add(*h[j], tempPoly, *h[j])
-			}
-		}
+		D_j_u_j := make([]*ring.Poly, m)
+		utils.MatrixVectorMul(r, D_j, u[j], D_j_u_j)
+		utils.VectorAdd(r, h, D_j_u_j, h)
 	}
 
 	// Round h to the nearest multiple of p
 	for _, poly := range h {
-		RoundCoeffsToNearestMultiple(r, poly, p)
+		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 
 	// c = H_c
 	c := H_c(r, A, b, h, mu)
 
-	// // Compute the column-wise mask from PRFs
-	// mask_prime := make([]*ring.Poly, n)
-	// for i := 0; i < n; i++ {
-	// 	newPoly := r.NewPoly()
-	// 	mask_prime[i] = &newPoly
-	// }
-	// for _, j := range T {
-	// 	sd_ji := seeds[j][partyInt]
-	// 	mask_j_prime := PRF(r, sid, sd_ji, PRFKey)
-	// 	for k := 0; k < n; k++ {
-	// 		r.Add(*mask_prime[k], *mask_j_prime[k], *mask_prime[k])
-	// 	}
-	// }
+	// Generate the column-wise mask from PRFs
+	mPrime := make([]*ring.Poly, n)
+	for _, j := range T {
+		mask_j := PRF(r, sid, (*seeds)[j][partyInt], PRFKey)
+		utils.VectorAdd(r, mPrime, mask_j, mPrime)
+	}
 
 	// Compute z_i as a vector of ring.Poly
-	z_i := make([]*ring.Poly, len(s_i))
-	for index, poly := range s_i {
-		finalPoly := r.NewPoly()
-		utils.MulPoly(r, poly, c, &finalPoly) // s_i_elem * c
-		// r.Mul(finalPoly, *lambda_T_i, finalPoly) // (s_i_elem * c) * lambda_T_i TODO, add back when adding lagrange
-
-		// Calculate (concatR_i * u_i) mod q for this poly
-		weightedSum := r.NewPoly()
-		for j := 0; j < len((*concatR_i)[partyInt]); j++ {
-			temp := r.NewPoly()
-
-			utils.MulPoly(r, (*concatR_i)[partyInt][j], u[partyInt][j], &temp) // concatR_i_elem * u_i_elem
-			r.Add(weightedSum, temp, weightedSum)                              // Accumulate
-		}
-
-		// Combine all terms
-		r.Add(finalPoly, weightedSum, finalPoly) // Add weightedSum to (s_i_elem * c) * lambda_T_i
-		// r.Add(finalPoly, *mask_prime[partyInt], finalPoly) // Add mask_prime[partyInt] to the finalPoly
-
-		z_i[index] = &finalPoly
-	}
+	z_i := make([]*ring.Poly, n)
+	utils.MatrixVectorMul(r, concatR, u[partyInt], z_i)
+	utils.VectorAdd(r, z_i, mPrime, z_i)
+	s_c := make([]*ring.Poly, n)
+	utils.VectorPolyMul(r, s_i, c, s_c)
+	utils.VectorAdd(r, z_i, s_c, z_i)
 
 	return z_i, c, h
 }
 
-// Hash parameters to a Gaussian distribution
-func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap map[int]*[][]*ring.Poly, mu string, mMap map[int][]*ring.Poly) []*ring.Poly {
-	hasher := sha3.NewShake128()
-
-	// Buffer to store all concatenated bytes
-	var buffer bytes.Buffer
-
-	// Handle matrix A
-	for _, row := range *A {
-		for _, poly := range row {
-			data, err := poly.MarshalBinary()
-			if err != nil {
-				log.Fatalf("Error marshalling poly: %v\n", err)
-			}
-			buffer.Write(data)
-		}
-	}
-
-	// Handle slice b
-	for _, poly := range b {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
-	}
-
-	// Handle integer sid
-	binary.Write(&buffer, binary.BigEndian, sid)
-
-	// Handle integer j
-	binary.Write(&buffer, binary.BigEndian, j)
-
-	// Handle map of matrices D
-	for _, D := range DMap {
-		for _, row := range *D {
-			for _, poly := range row {
-				data, err := poly.MarshalBinary()
-				if err != nil {
-					log.Fatalf("Error marshalling poly: %v\n", err)
-				}
-				buffer.Write(data)
-			}
-		}
-	}
-
-	// Handle string mu
-	buffer.WriteString(mu)
-
-	// Handle map of slices m
-	for _, m := range mMap {
-		for _, poly := range m {
-			data, err := poly.MarshalBinary()
-			if err != nil {
-				log.Fatalf("Error marshalling poly: %v\n", err)
-			}
-			buffer.Write(data)
-		}
-	}
-
-	// Write the final concatenated data to the hasher
-	_, err := hasher.Write(buffer.Bytes())
-	if err != nil {
-		log.Fatalf("Error writing hash: %v\n", err)
-	}
-
-	hashOutputLength := d - 1
-	hashOutput := make([]byte, hashOutputLength)
-	_, err = hasher.Read(hashOutput)
-	if err != nil {
-		log.Fatalf("Error reading hash: %v\n", err)
-	}
-
-	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaU, Bound: boundU}
-	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
-
-	u_j := make([]*ring.Poly, d-1)
-	for i := 0; i < d-1; i++ {
-		element := hashGaussiamSampler.ReadNew()
-		fmt.Printf("H_u element: %v\n", element)
-		u_j[i] = &element
-	}
-
-	return u_j
-}
-
-// PRF to ring elements
-func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
-	hasher := sha3.NewShake128()
-
-	// Buffer to store all concatenated bytes
-	var buffer bytes.Buffer
-
-	// Handle PRF key
-	binary.Write(&buffer, binary.BigEndian, PRFKey)
-
-	// Handle seed
-	binary.Write(&buffer, binary.BigEndian, sd_ij)
-
-	// Handle integer sid
-	binary.Write(&buffer, binary.BigEndian, sid)
-
-	// Write the final concatenated data to the hasher
-	_, err := hasher.Write(buffer.Bytes())
-	if err != nil {
-		log.Fatalf("Error writing hash: %v\n", err)
-	}
-
-	hashOutputLength := n
-	hashOutput := make([]byte, hashOutputLength)
-	_, err = hasher.Read(hashOutput)
-	if err != nil {
-		log.Fatalf("Error reading hash: %v\n", err)
-	}
-
-	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	prfUniformSampler := ring.NewUniformSampler(prng, r)
-
-	mask := make([]*ring.Poly, n)
-	for i := 0; i < n; i++ {
-		element := prfUniformSampler.ReadNew()
-		mask[i] = &element
-	}
-	return mask
-}
-
-// Hash to low norm ring elements
-func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu string) *ring.Poly {
-	hasher := sha3.NewShake128()
-
-	// Buffer to store all concatenated bytes
-	var buffer bytes.Buffer
-
-	// Handle matrix A
-	for _, row := range *A {
-		for _, poly := range row {
-			data, err := poly.MarshalBinary()
-			if err != nil {
-				log.Fatalf("Error marshalling poly: %v\n", err)
-			}
-			buffer.Write(data)
-		}
-	}
-
-	// Handle slice b
-	for _, poly := range b {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
-	}
-
-	// Handle slice h
-	for _, poly := range h {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
-	}
-
-	// Handle string mu
-	binary.Write(&buffer, binary.BigEndian, mu)
-
-	// Write the final concatenated data to the hasher
-	_, err := hasher.Write(buffer.Bytes())
-	if err != nil {
-		log.Fatalf("Error writing hash: %v\n", err)
-	}
-
-	hashOutputLength := n
-	hashOutput := make([]byte, hashOutputLength)
-	_, err = hasher.Read(hashOutput)
-	if err != nil {
-		log.Fatalf("Error reading hash: %v\n", err)
-	}
-
-	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-
-	ternaryParams := ring.Ternary{H: kappa}
-	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, false)
-	if err != nil {
-		log.Fatalf("Error creating ternary sampler: %v", err)
-	}
-
-	c := ternarySampler.ReadNew()
-
-	// fmt.Printf("H_c: %v\n", c)
-
-	return &c
-}
-
-// RoundPolyCoefficientsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
-// and updates the polynomial using the SetCoefficientsBigint method.
-func RoundCoeffsToNearestMultiple(r *ring.Ring, poly *ring.Poly, p uint64) {
-	pBig := new(big.Int).SetUint64(p)
-	halfP := new(big.Int).Div(new(big.Int).SetUint64(p), big.NewInt(2)) // p/2 for rounding calculation
-	roundedCoeffs := make([]*big.Int, poly.N())
-	coeffsBigint := make([]*big.Int, poly.N())
-	r.PolyToBigint(*poly, 1, coeffsBigint)
-
-	// Calculate rounded coefficients
-	for i, coeff := range coeffsBigint {
-		// Initialize if nil
-		if roundedCoeffs[i] == nil {
-			roundedCoeffs[i] = new(big.Int)
-		}
-
-		// Perform rounding
-		mod := new(big.Int).Mod(coeff, pBig)
-		if mod.Cmp(halfP) > 0 {
-			coeff.Add(coeff, pBig)
-			coeff.Sub(coeff, mod)
-		} else {
-			coeff.Sub(coeff, mod)
-		}
-		roundedCoeffs[i].Set(coeff)
-	}
-
-	r.SetCoefficientsBigint(roundedCoeffs, *poly)
-}
-
-func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
-	lagrangePolynomials := make([]*ring.Poly, len(T)) // TODO: confirm len T
-
-	// For each index in T, we need to create a polynomial l_j(x) that is 1 at x_j and 0 at all other x_m in T
-	for j, xj := range T {
-		// Start with l_j(x) = 1
-		l_j := r.NewPoly()
-		r.AddScalar(l_j, 1, l_j)
-
-		// Create the Lagrange polynomial for each xj
-		for _, xm := range T {
-			if xm != xj {
-				// Compute (x - xm)
-				tempPoly := r.NewMonomialXi(1)
-				r.SubScalar(tempPoly, uint64(xm), tempPoly) // tempPoly = x - xm
-
-				// Multiply l_j by (x - xm)
-				resultPoly := r.NewPoly()
-				utils.MulPoly(r, &l_j, &tempPoly, &resultPoly)
-
-				l_j = resultPoly
-			}
-		}
-
-		// Normalize l_j(x) to make l_j(x_j) = 1
-		// Compute the denominator product (x_j - xm) for m != j
-		denom := uint64(1)
-		for _, xm := range T {
-			if xm != xj {
-				denom *= uint64(xj - xm)
-				denom %= q // Perform modulo operation to keep within field limits
-			}
-		}
-
-		// Compute multiplicative inverse of denom mod q
-		denomInv := new(big.Int).ModInverse(big.NewInt(int64(denom)), big.NewInt(int64(q)))
-
-		// Multiply each coefficient of l_j by denomInv
-		r.MulScalarBigint(l_j, denomInv, l_j)
-
-		lagrangePolynomials[j] = &l_j
-	}
-
-	return lagrangePolynomials
-}
-
-func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly, h []*ring.Poly) ([]*ring.Poly, []*ring.Poly) {
+func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly, h []*ring.Poly) ([]*ring.Poly, []*ring.Poly) {
 	// Initialize z_sum as an array of zero polynomials
 	z_sum := make([]*ring.Poly, n)
-	for i := range z_sum {
-		newPoly := r.NewPoly()
-		z_sum[i] = &newPoly
-	}
 
 	// Compute z_sum = Σ(z_j - m_j) mod q
-	for _, z_j := range z { // Looping through each z_j
-		// mask_j := m[j]
+	for j, z_j := range z { // Looping through each z_j
+		mask_j := mMap[j]
 		for i := 0; i < n; i++ {
-			// r.Sub(*z_j[i], *mask_j[i], *z_j[i])  // z_j[i] - m_j[i] mod q
-			r.Add(*z_sum[i], *z_j[i], *z_sum[i]) // Accumulate the result
+			newPoly := r.NewPoly()
+			z_sum[i] = &newPoly
+			r.Sub(*z_j[i], *mask_j[i], *z_j[i]) // z_j[i] - m_j[i] mod q
+			r.Add(*z_sum[i], *z_j[i], *z_sum[i])
 		}
 	}
 
-	// Compute Az
-	Az := make([]*ring.Poly, n)
-	for i := 0; i < n; i++ {
-		newPoly := r.NewPoly()
-		Az[i] = &newPoly
-		for k := 0; k < n; k++ {
-			temp := r.NewPoly()
-			utils.MulPoly(r, (*A)[i][k], z_sum[k], &temp)
-			r.Add(*Az[i], temp, *Az[i])
-		}
-	}
+	// Compute Az using MatrixVectorMul
+	Az := make([]*ring.Poly, m)
+	utils.MatrixVectorMul(r, A, z_sum, Az)
 
-	fmt.Printf("Az: %v\n", Az[0].Coeffs[0])
+	// Compute bc using VectorPolyMul
+	bc := make([]*ring.Poly, m)
+	utils.VectorPolyMul(r, b, c, bc)
 
-	// Compute Az - bc
-	bc := make([]*ring.Poly, n)
-	Az_bc := make([]*ring.Poly, n)
-	for i := 0; i < n; i++ {
-		newPoly := r.NewPoly()
-		bc[i] = &newPoly
-		newPoly = r.NewPoly()
-		Az_bc[i] = &newPoly
-		utils.MulPoly(r, b[i], c, bc[i])
+	// Subtract bc from Az to get Az_bc
+	Az_bc := make([]*ring.Poly, m)
+	utils.VectorSub(r, Az, bc, Az_bc)
 
-		r.Sub(*Az[i], *bc[i], *Az_bc[i]) // Az[i] - bc[i]
-	}
+	utils.PrintVector("Az - bc: ", Az_bc)
 
-	fmt.Printf("Az - bc: %v\n", Az_bc[0].Coeffs[0])
-
-	// Round Az - bc to the nearest multiple of p
+	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
-		RoundCoeffsToNearestMultiple(r, poly, p)
+		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
+	utils.PrintVector("Rounded Az_bc: ", Az_bc)
 
 	// Compute Δ = [h_p] - [Az - bc]_p
-	Delta := make([]*ring.Poly, len(h)) // Assume hLength is the new defined length of vector h
-	for i := range Delta {
-		newPoly := r.NewPoly()
-		Delta[i] = &newPoly
-		r.Sub(*h[i], *Az_bc[i], *Delta[i])
-	}
+	Delta := make([]*ring.Poly, m)
+	utils.VectorSub(r, h, Az_bc, Delta)
 
 	return Delta, z_sum
 }
@@ -839,4 +502,244 @@ func userPRNGKey(skShare []*ring.Poly) []byte {
 		log.Fatalf("Error reading hash: %v\n", err)
 	}
 	return skHash
+}
+
+// HASHES & PRF
+
+// Hash parameters to a Gaussian distribution
+func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap map[int]*[][]*ring.Poly, mu string, mMap map[int][]*ring.Poly) []*ring.Poly {
+	hasher := sha3.NewShake128()
+
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+
+	// Handle matrix A
+	for _, row := range *A {
+		for _, poly := range row {
+			data, err := poly.MarshalBinary()
+			if err != nil {
+				log.Fatalf("Error marshalling poly: %v\n", err)
+			}
+			buffer.Write(data)
+		}
+	}
+
+	// Handle slice b
+	for _, poly := range b {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Handle integer sid
+	binary.Write(&buffer, binary.BigEndian, sid)
+
+	// Handle integer j
+	binary.Write(&buffer, binary.BigEndian, j)
+
+	// Handle map of matrices D
+	for _, D := range DMap {
+		for _, row := range *D {
+			for _, poly := range row {
+				data, err := poly.MarshalBinary()
+				if err != nil {
+					log.Fatalf("Error marshalling poly: %v\n", err)
+				}
+				buffer.Write(data)
+			}
+		}
+	}
+
+	// Handle string mu
+	buffer.WriteString(mu)
+
+	// Handle map of slices m
+	for _, m := range mMap {
+		for _, poly := range m {
+			data, err := poly.MarshalBinary()
+			if err != nil {
+				log.Fatalf("Error marshalling poly: %v\n", err)
+			}
+			buffer.Write(data)
+		}
+	}
+
+	// Write the final concatenated data to the hasher
+	_, err := hasher.Write(buffer.Bytes())
+	if err != nil {
+		log.Fatalf("Error writing hash: %v\n", err)
+	}
+
+	hashOutputLength := d - 1
+	hashOutput := make([]byte, hashOutputLength)
+	_, err = hasher.Read(hashOutput)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+
+	prng, _ := sampling.NewKeyedPRNG(hashOutput)
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaU, Bound: boundU}
+	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
+
+	u_j := make([]*ring.Poly, d-1)
+	for i := 0; i < d-1; i++ {
+		element := hashGaussiamSampler.ReadNew()
+		u_j[i] = &element
+	}
+
+	return u_j
+}
+
+// PRF to ring elements
+func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
+	hasher := sha3.NewShake128()
+
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+
+	// Handle PRF key
+	binary.Write(&buffer, binary.BigEndian, PRFKey)
+
+	// Handle seed
+	binary.Write(&buffer, binary.BigEndian, sd_ij)
+
+	// Handle integer sid
+	binary.Write(&buffer, binary.BigEndian, sid)
+
+	// Write the final concatenated data to the hasher
+	_, err := hasher.Write(buffer.Bytes())
+	if err != nil {
+		log.Fatalf("Error writing hash: %v\n", err)
+	}
+
+	hashOutputLength := n
+	hashOutput := make([]byte, hashOutputLength)
+	_, err = hasher.Read(hashOutput)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+
+	prng, _ := sampling.NewKeyedPRNG(hashOutput)
+	PRFUniformSampler := ring.NewUniformSampler(prng, r)
+
+	mask := make([]*ring.Poly, n)
+	for i := 0; i < n; i++ {
+		element := PRFUniformSampler.ReadNew()
+		mask[i] = &element
+	}
+	return mask
+}
+
+// Hash to low norm ring elements
+func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu string) *ring.Poly {
+	hasher := sha3.NewShake128()
+
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+
+	// Handle matrix A
+	for _, row := range *A {
+		for _, poly := range row {
+			data, err := poly.MarshalBinary()
+			if err != nil {
+				log.Fatalf("Error marshalling poly: %v\n", err)
+			}
+			buffer.Write(data)
+		}
+	}
+
+	// Handle slice b
+	for _, poly := range b {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Handle slice h
+	for _, poly := range h {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	// Handle string mu
+	binary.Write(&buffer, binary.BigEndian, mu)
+
+	// Write the final concatenated data to the hasher
+	_, err := hasher.Write(buffer.Bytes())
+	if err != nil {
+		log.Fatalf("Error writing hash: %v\n", err)
+	}
+
+	hashOutputLength := n
+	hashOutput := make([]byte, hashOutputLength)
+	_, err = hasher.Read(hashOutput)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+
+	prng, _ := sampling.NewKeyedPRNG(hashOutput)
+	ternaryParams := ring.Ternary{H: kappa}
+	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, false)
+	if err != nil {
+		log.Fatalf("Error creating ternary sampler: %v", err)
+	}
+
+	c := ternarySampler.ReadNew()
+
+	return &c
+}
+
+// Functions that need help
+
+func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
+	lagrangePolynomials := make([]*ring.Poly, len(T)) // TODO: confirm len T
+
+	// For each index in T, we need to create a polynomial l_j(x) that is 1 at x_j and 0 at all other x_m in T
+	for j, xj := range T {
+		// Start with l_j(x) = 1
+		l_j := r.NewPoly()
+		r.AddScalar(l_j, 1, l_j)
+
+		// Create the Lagrange polynomial for each xj
+		for _, xm := range T {
+			if xm != xj {
+				// Compute (x - xm)
+				tempPoly := r.NewMonomialXi(1)
+				r.SubScalar(tempPoly, uint64(xm), tempPoly) // tempPoly = x - xm
+
+				// Multiply l_j by (x - xm)
+				resultPoly := r.NewPoly()
+				utils.MulPoly(r, &l_j, &tempPoly, &resultPoly)
+
+				l_j = resultPoly
+			}
+		}
+
+		// Normalize l_j(x) to make l_j(x_j) = 1
+		// Compute the denominator product (x_j - xm) for m != j
+		denom := uint64(1)
+		for _, xm := range T {
+			if xm != xj {
+				denom *= uint64(xj - xm)
+				denom %= q // Perform modulo operation to keep within field limits
+			}
+		}
+
+		// Compute multiplicative inverse of denom mod q
+		denomInv := new(big.Int).ModInverse(big.NewInt(int64(denom)), big.NewInt(int64(q)))
+
+		// Multiply each coefficient of l_j by denomInv
+		r.MulScalarBigint(l_j, denomInv, l_j)
+
+		lagrangePolynomials[j] = &l_j
+	}
+
+	return lagrangePolynomials
 }

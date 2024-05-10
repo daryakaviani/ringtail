@@ -198,7 +198,7 @@ func PrintMatrix(label string, matrix *[][]*ring.Poly) {
 	log.Println(label)
 	for i, row := range *matrix {
 		for j, poly := range row {
-			log.Printf("A[%d][%d]: %v\n", i, j, poly.Coeffs[0])
+			log.Printf("[%d][%d]: %v\n", i, j, poly.Coeffs[0])
 		}
 	}
 }
