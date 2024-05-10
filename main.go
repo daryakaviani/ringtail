@@ -18,12 +18,12 @@ import (
 
 // PARAMETERS
 const (
-	m         = 5
-	n         = 5
-	p         = 2 // TODO: Experiment
-	t         = 1 // Active threshold
-	k         = 1 // Total number of parties
-	d         = 5 // Length of joint noise vector
+	m         = 10
+	n         = 10
+	p         = 2  // TODO: Experiment
+	t         = 1  // Active threshold
+	k         = 1  // Total number of parties
+	d         = 10 // Length of joint noise vector
 	ell       = 1
 	beta      = 10
 	betaDelta = 3291932728626317921
@@ -39,16 +39,26 @@ const (
 	sigmaStar = 2
 	boundU    = 0.5
 	sigmaU    = 2
+	keySize   = 30
 )
 
-// var q = uint64(61)
-var q = ring.Qi60[0]
+var q = uint64(61)
+
+// var q = ring.Qi60[0]
 
 func main() {
+	TestShamirSecretSharing()
+
+	randomKey := make([]byte, keySize)
+	if _, err := rand.Read(randomKey); err != nil {
+		log.Fatalf("failed to generate random key: %v", err)
+	}
+	fmt.Printf("Random PRNG Key: %v", randomKey)
+
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
-	prng, _ := sampling.NewKeyedPRNG([]byte("0")) // TODO: Change to random key for the PRNG seeding
+	prng, _ := sampling.NewKeyedPRNG(randomKey) // TODO: Change to random key for the PRNG seeding
 	uniformSampler := ring.NewUniformSampler(prng, r)
-	trustedDealerKey := "Trusted dealer key"
+	trustedDealerKey := randomKey
 
 	// Setup
 	A := Setup(uniformSampler)
@@ -77,7 +87,6 @@ func main() {
 	PRFKey := "PRF Key"
 	T := []int{0}
 	partyInt := 0
-	// lagrangeCoeffs := GenLagrangeCoefficients(r, T)
 
 	D[partyInt], mask[partyInt], concatR[partyInt] = SignRound1(r, uniformSampler, A, partyInt, sid, skShares[0], mu, []byte(PRFKey), (*seeds)[0], T)
 
@@ -305,7 +314,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds *map[int][][]byte, concatR *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds *map[int][][]byte, concatR *[][]*ring.Poly, lambda *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
 	// Create the noise vectors u
 	u := make(map[int][]*ring.Poly, d)
 	onePoly := r.NewMonomialXi(0)
@@ -345,9 +354,10 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	z_i := make([]*ring.Poly, n)
 	utils.MatrixVectorMul(r, concatR, u[partyInt], z_i)
 	utils.VectorAdd(r, z_i, mPrime, z_i)
-	s_c := make([]*ring.Poly, n)
-	utils.VectorPolyMul(r, s_i, c, s_c)
-	utils.VectorAdd(r, z_i, s_c, z_i)
+	s_c_lambda := make([]*ring.Poly, n)
+	utils.VectorPolyMul(r, s_i, c, s_c_lambda)
+	// utils.VectorPolyMul(r, s_c_lambda, lambda, s_c_lambda)
+	utils.VectorAdd(r, z_i, s_c_lambda, z_i)
 
 	return z_i, c, h
 }
@@ -395,27 +405,6 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, mMap map[int][]*ring.Pol
 }
 
 func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta []*ring.Poly, betaDelta uint64) bool {
-	// Calculate [Az - bc]_p + Delta
-	// computedH := make([]*ring.Poly, len(z))
-	// for i := range computedH {
-	// 	newPoly := r.NewPoly()
-	// 	computedH[i] = &newPoly
-	// 	for k := range z {
-	// 		temp := r.NewPoly()
-	// 		MulPoly(r, (*A)[i][k], z[k], &temp)
-	// 		r.Add(*computedH[i], temp, *computedH[i])
-	// 	}
-	// }
-
-	// bc := make([]*ring.Poly, len(b))
-	// for i, bi := range b {
-	// 	newPoly := r.NewPoly()
-	// 	bc[i] = &newPoly
-	// 	MulPoly(r, bi, c, bc[i])                         // Compute b_i * c
-	// 	r.Sub(*computedH[i], *bc[i], *computedH[i])      // Compute Az_i - b_i*c
-	// 	RoundCoeffsToNearestMultiple(r, computedH[i], p) // Round to nearest multiple of p
-	// }
-
 	// Compute Az using MatrixVectorMul
 	Az := make([]*ring.Poly, m)
 	utils.MatrixVectorMul(r, A, z, Az)
@@ -495,7 +484,7 @@ func userPRNGKey(skShare []*ring.Poly) []byte {
 
 	hasher.Write(buffer.Bytes())
 
-	hashOutputLength := n // TODO: Check
+	hashOutputLength := keySize
 	skHash := make([]byte, hashOutputLength)
 	_, err := hasher.Read(skHash)
 	if err != nil {
@@ -572,7 +561,7 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
 
-	hashOutputLength := d - 1
+	hashOutputLength := keySize
 	hashOutput := make([]byte, hashOutputLength)
 	_, err = hasher.Read(hashOutput)
 	if err != nil {
@@ -588,6 +577,8 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 		element := hashGaussiamSampler.ReadNew()
 		u_j[i] = &element
 	}
+
+	utils.PrintVector("u_j", u_j)
 
 	return u_j
 }
@@ -614,7 +605,7 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
 
-	hashOutputLength := n
+	hashOutputLength := keySize
 	hashOutput := make([]byte, hashOutputLength)
 	_, err = hasher.Read(hashOutput)
 	if err != nil {
@@ -677,7 +668,7 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
 
-	hashOutputLength := n
+	hashOutputLength := keySize
 	hashOutput := make([]byte, hashOutputLength)
 	_, err = hasher.Read(hashOutput)
 	if err != nil {
@@ -696,50 +687,150 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 	return &c
 }
 
-// Functions that need help
+// ShamirSecretSharing shares each coefficient of a vector of ring.Poly across k parties using (t, k)-threshold Shamir secret sharing.
+func ShamirSecretSharing(r *ring.Ring, s []*ring.Poly, t, k int) [][]*ring.Poly {
+	modulus := q    // Assuming using the first modulus for simplicity
+	degree := r.N() // Number of coefficients in each ring.Poly
 
-func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
-	lagrangePolynomials := make([]*ring.Poly, len(T)) // TODO: confirm len T
-
-	// For each index in T, we need to create a polynomial l_j(x) that is 1 at x_j and 0 at all other x_m in T
-	for j, xj := range T {
-		// Start with l_j(x) = 1
-		l_j := r.NewPoly()
-		r.AddScalar(l_j, 1, l_j)
-
-		// Create the Lagrange polynomial for each xj
-		for _, xm := range T {
-			if xm != xj {
-				// Compute (x - xm)
-				tempPoly := r.NewMonomialXi(1)
-				r.SubScalar(tempPoly, uint64(xm), tempPoly) // tempPoly = x - xm
-
-				// Multiply l_j by (x - xm)
-				resultPoly := r.NewPoly()
-				utils.MulPoly(r, &l_j, &tempPoly, &resultPoly)
-
-				l_j = resultPoly
-			}
+	// Initialize shares for each party
+	shares := make([][]*ring.Poly, k)
+	for i := range shares {
+		shares[i] = make([]*ring.Poly, len(s))
+		for j := range shares[i] {
+			newPoly := r.NewPoly()
+			shares[i][j] = &newPoly
 		}
-
-		// Normalize l_j(x) to make l_j(x_j) = 1
-		// Compute the denominator product (x_j - xm) for m != j
-		denom := uint64(1)
-		for _, xm := range T {
-			if xm != xj {
-				denom *= uint64(xj - xm)
-				denom %= q // Perform modulo operation to keep within field limits
-			}
-		}
-
-		// Compute multiplicative inverse of denom mod q
-		denomInv := new(big.Int).ModInverse(big.NewInt(int64(denom)), big.NewInt(int64(q)))
-
-		// Multiply each coefficient of l_j by denomInv
-		r.MulScalarBigint(l_j, denomInv, l_j)
-
-		lagrangePolynomials[j] = &l_j
 	}
 
-	return lagrangePolynomials
+	// Perform secret sharing for each coefficient in each polynomial
+	for polyIndex, poly := range s {
+		coeffs := make([]*big.Int, degree)
+		r.PolyToBigint(*poly, 1, coeffs) // Extract bigint coefficients from the polynomial
+
+		for coeffIndex, secret := range coeffs {
+			// Create a polynomial for sharing this coefficient
+			polyCoeffs := make([]*big.Int, t)
+			polyCoeffs[0] = secret // the secret is the coefficient itself
+			for i := 1; i < t; i++ {
+				randomCoeff, _ := rand.Int(rand.Reader, big.NewInt(int64(modulus)))
+				polyCoeffs[i] = randomCoeff
+			}
+
+			// Evaluate this polynomial at points 1 to k
+			for i := 1; i <= k; i++ {
+				x := big.NewInt(int64(i))
+				shareValue := big.NewInt(0)
+				xPow := big.NewInt(1) // x^0
+
+				for _, coeff := range polyCoeffs {
+					term := new(big.Int).Mul(coeff, xPow)
+					shareValue.Add(shareValue, term)
+					shareValue.Mod(shareValue, big.NewInt(int64(modulus)))
+					xPow.Mul(xPow, x)
+				}
+
+				// Update the coefficient in the share polynomial
+				if shares[i-1][polyIndex].Coeffs[0] == nil {
+					shares[i-1][polyIndex].Coeffs[0] = make([]uint64, degree)
+				}
+				// Set the calculated share value to the specific coefficient
+				shares[i-1][polyIndex].Coeffs[0][coeffIndex] = shareValue.Uint64()
+			}
+		}
+	}
+
+	return shares
+}
+
+func TestShamirSecretSharing() {
+	r, _ := ring.NewRing(1<<logN, []uint64{q})
+
+	// Number of polynomials in the test vector
+	numPolys := 3 // Expanded to multiple polynomials
+
+	// Generate a test polynomial vector
+	s := make([]*ring.Poly, numPolys)
+	for i := range s {
+		newPoly := r.NewPoly()
+		s[i] = &newPoly
+		randCoeffs := make([]*big.Int, r.N())
+		for j := range randCoeffs {
+			randCoeffs[j] = big.NewInt(int64(i*100 + j + 1)) // Ensuring unique sequential values for each polynomial
+		}
+		r.SetCoefficientsBigint(randCoeffs, *s[i])
+	}
+
+	tVal := 3 // Threshold
+	kVal := 5 // Total number of shares
+
+	// Share the secrets
+	shares := ShamirSecretSharing(r, s, tVal, kVal)
+
+	// Indices of shares that will be used for reconstruction
+	indices := []int{0, 1, 2} // Using the first t shares
+	lagrangeCoeffs := ComputeLagrangeCoefficients(indices, big.NewInt(int64(q)))
+
+	// Reconstruct the secrets using the first t shares
+	reconstructed := make([]*ring.Poly, numPolys)
+	for i := range reconstructed {
+		newPoly := r.NewPoly()
+		reconstructed[i] = &newPoly
+		for j, idx := range indices {
+			tempPoly := r.NewPoly()
+			r.SetCoefficientsBigint([]*big.Int{lagrangeCoeffs[j]}, tempPoly) // Create a poly with the Lagrange coeff
+			utils.MulPoly(r, &tempPoly, shares[idx][i], &tempPoly)           // Scale share by its Lagrange coeff
+			r.Add(*reconstructed[i], tempPoly, *reconstructed[i])            // Accumulate into the reconstructed secret
+		}
+	}
+
+	// Check if original and reconstructed secrets match
+	allMatch := true
+	utils.PrintVector("s:", s)
+	utils.PrintVector("rec:", reconstructed)
+	for i, origPoly := range s {
+		if !r.Equal(*origPoly, *reconstructed[i]) {
+			log.Printf("Mismatch found in polynomial %d", i)
+			allMatch = false
+		}
+	}
+
+	if allMatch {
+		fmt.Println("All polynomials successfully reconstructed")
+		utils.PrintVector("Reconstructed Polynomials: ", reconstructed)
+		utils.PrintVector("Original Polynomials: ", s)
+	} else {
+		log.Fatalf("Original and reconstructed polynomials do not match")
+	}
+}
+
+// ComputeLagrangeCoefficients computes the Lagrange coefficients for interpolation based on the indices of available shares.
+func ComputeLagrangeCoefficients(indices []int, modulus *big.Int) []*big.Int {
+	k := len(indices)
+	lagrangeCoefficients := make([]*big.Int, k)
+
+	for i := 0; i < k; i++ {
+		xi := big.NewInt(int64(indices[i] + 1)) // Convert index to x value (x values are 1-based in Shamir's scheme)
+		numerator := big.NewInt(1)
+		denominator := big.NewInt(1)
+
+		for j := 0; j < k; j++ {
+			if i != j {
+				xj := big.NewInt(int64(indices[j] + 1))
+				// numerator *= (0 - xj)
+				numerator.Mul(numerator, new(big.Int).Neg(xj))
+				numerator.Mod(numerator, modulus)
+				// denominator *= (xi - xj)
+				temp := new(big.Int).Sub(xi, xj)
+				denominator.Mul(denominator, temp)
+				denominator.Mod(denominator, modulus)
+			}
+		}
+
+		// Calculate the modular inverse of the denominator
+		denomInv := new(big.Int).ModInverse(denominator, modulus)
+		lagrangeCoefficients[i] = new(big.Int).Mul(numerator, denomInv)
+		lagrangeCoefficients[i].Mod(lagrangeCoefficients[i], modulus)
+	}
+
+	return lagrangeCoefficients
 }
