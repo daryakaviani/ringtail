@@ -12,14 +12,14 @@ import (
 )
 
 const (
-	m = 15
-	n = 15
+	m = 20
+	n = 20
 	// q       = uint64(61) // Modulo parameter
 	p       = 5
 	e_bound = 0 // Keep these as 0 for now!
 	sigma_e = 0 // Standard deviation for the error distribution
-	sigma_c = 1 // Standard deviation for the hash output distribution
-	c_bound = 2
+	sigma_c = 2 // Standard deviation for the hash output distribution
+	c_bound = 3
 	logN    = 3
 	kappa   = 10
 )
@@ -216,34 +216,33 @@ func H(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu strin
 
 // BCMVer verifies the signature using public parameters and the message.
 func BCMVer(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, mu string, c *ring.Poly, z []*ring.Poly) bool {
-	// Compute Az - bc
-	Az_bc := make([]*ring.Poly, n)
-	// bc := r.NewPoly()
+	// Compute Az using MatrixVectorMul
+	Az := make([]*ring.Poly, m)
+	MatrixVectorMul(r, A, z, Az)
+
+	// Compute bc using VectorPolyMul
+	bc := make([]*ring.Poly, m)
+	VectorPolyMul(r, b, c, bc)
+
+	// Subtract bc from Az to get Az_bc
+	Az_bc := make([]*ring.Poly, m)
 	for i := 0; i < m; i++ {
-		tempAz := r.NewPoly()
-		tempBc := r.NewPoly()
 		newPoly := r.NewPoly()
 		Az_bc[i] = &newPoly
-		for j := 0; j < n; j++ {
-			temp := r.NewPoly()
-			MulPoly(r, (*A)[i][j], z[j], &temp)
-			r.Add(tempAz, temp, tempAz)
-		}
-		MulPoly(r, b[i], c, &tempBc)
-		r.Sub(tempAz, tempBc, *Az_bc[i])
+		r.Sub(*Az[i], *bc[i], *Az_bc[i])
 	}
+
 	printVector("Az - bc: ", Az_bc)
 
-	// Round h to the nearest multiple of p
+	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
 		RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 	printVector("Rounded Az_bc: ", Az_bc)
 
-	// Hash Az - bc and mu to obtain a hash value
+	// Hash Az_bc and mu to obtain a hash value
 	computedC := H(r, A, b, Az_bc, mu)
 
-	printPolynomial("Original c: ", c)
 	printPolynomial("Computed c: ", computedC)
 
 	// Compare computed c with the provided c
