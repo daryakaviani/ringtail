@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"lattice-threshold-signature/utils"
 	"log"
 	"math/big"
 
@@ -15,39 +16,42 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-const m = 10
-const n = 10
-const p = 2  // TODO: Experiment
-const t = 1  // Active threshold
-const k = 1  // Total number of parties
-const d = 10 // Length of joint noise vector
-const ell = 1
-const beta = 10
-const betaDelta = 3291932728626317921
-const kappa = 10
-const logN = 3
-const sigma = 1
-const bound = 1
+const (
+	m         = 1
+	n         = 1
+	p         = 2 // TODO: Experiment
+	t         = 1 // Active threshold
+	k         = 1 // Total number of parties
+	d         = 1 // Length of joint noise vector
+	ell       = 1
+	beta      = 10
+	betaDelta = 3291932728626317921
+	kappa     = 10
+	logN      = 3
+	e_bound   = 0.5 // Keep these as 0 for now!
+	sigma_e   = 2   // Standard deviation for the error distribution
+	bound_c   = 3
+	sigma_c   = 2 // Standard deviation for the hash output distribution
+	boundE    = 0.5
+	sigmaE    = 2
+	boundStar = 0.5
+	sigmaStar = 2
+	boundU    = 0.5
+	sigmaU    = 2
+)
 
 var q = uint64(61)
 
-// var q = ring.Qi60[0]
-
 func main() {
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
-	prng, _ := sampling.NewKeyedPRNG([]byte("0")) // TODO: Change to random key for the PRNG seeing
+	prng, _ := sampling.NewKeyedPRNG([]byte("0")) // TODO: Change to random key for the PRNG seeding
 	uniformSampler := ring.NewUniformSampler(prng, r)
 	trustedDealerKey := "Trusted dealer key"
 
 	// Setup
 	A := Setup(uniformSampler)
 
-	fmt.Println("Matrix A:")
-	for i, row := range *A {
-		for j, poly := range row {
-			fmt.Printf("A[%d][%d]: %v\n", i, j, poly.Coeffs[0])
-		}
-	}
+	utils.PrintMatrix("A: ", A)
 
 	// Gen
 	skShare, seeds, b := Gen(r, A, uniformSampler, []byte(trustedDealerKey))
@@ -68,10 +72,7 @@ func main() {
 		}
 	}
 
-	fmt.Println("Vector b:")
-	for i, poly := range b {
-		fmt.Printf("b[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
-	}
+	utils.PrintVector("b: ", b)
 
 	// Test signing round 1 by simulating each of the parties
 	mu := "Hello, Threshold Signature!"
@@ -88,41 +89,17 @@ func main() {
 		D[i], mask[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[0], mu, []byte(PRFKey), seeds[0], T)
 	}
 
-	fmt.Println("Matrix D:")
 	for key, matrix := range D {
-		fmt.Printf("D[%d]:\n", key)
-		for i, row := range *matrix {
-			fmt.Printf("\tRow %d:\n", i)
-			for j, poly := range row {
-				fmt.Printf("\t\tD[%d][%d]: %v\n", i, j, poly.Coeffs[0]) // Print each poly's coefficients
-			}
-		}
+		utils.PrintMatrix("D_"+fmt.Sprint(key), matrix)
 	}
 
-	fmt.Println("Mask m:")
-	for key, polys := range mask {
-		fmt.Printf("m[%d]:\n", key)
-		for i, poly := range polys {
-			fmt.Printf("\tPoly %d: %v\n", i, poly.Coeffs[0]) // Print coefficients of each polynomial
-		}
+	for key, vec := range mask {
+		utils.PrintVector("Mask_m_"+fmt.Sprint(key), vec)
 	}
 
-	fmt.Println("Concatenated R:")
 	for key, matrix := range concatR {
-		fmt.Printf("concatR[%d]:\n", key)
-		for i, row := range *matrix {
-			fmt.Printf("\tRow %d:\n", i)
-			for j, poly := range row {
-				fmt.Printf("\t\tconcatR[%d][%d]: %v\n", i, j, poly.Coeffs[0]) // Print each poly's coefficients
-			}
-		}
+		utils.PrintMatrix("concatR_"+fmt.Sprint(key), matrix)
 	}
-
-	// // Test of D
-	// fmt.Println("TEST OF D MATRIX")
-	// newPoly := r.NewPoly()
-	// MulPoly(r, (*A)[0][0], (*concatR[0])[0][0], &newPoly)
-	// fmt.Printf("D test: %v", newPoly)
 
 	// Testing signing round 2 by simulating each of the parties
 	z := make(map[int][]*ring.Poly)
@@ -134,33 +111,26 @@ func main() {
 	}
 
 	// After computation in SignRound2
-	fmt.Println("Z Vector:")
 	for i, polys := range z {
-		fmt.Printf("z[%d]:\n", i)
-		for j, poly := range polys {
-			fmt.Printf("\tZ %d: %v\n", j, poly.Coeffs[0]) // Print coefficients of each polynomial
-		}
+		utils.PrintVector("z_"+fmt.Sprint(i), polys)
 	}
 
-	fmt.Printf("c:\n")
 	for i, poly := range c {
-		fmt.Printf("\tc[%d]: %v\n", i, poly.Coeffs[0]) // Print the polynomial's coefficients
+		utils.PrintPolynomial("c_"+fmt.Sprint(i), poly)
+	}
+
+	for i, poly := range h {
+		utils.PrintVector("h_"+fmt.Sprint(i), poly)
 	}
 
 	// Aggregate the signature
 	// TODO: Update to take in only the local user's h value, this part is not broadcasted
 	Delta, sig := SignFinalize(r, z, mask, A, b, c[0], h[0])
-	fmt.Printf("Delta: %v\n", Delta[0].Coeffs[0])
-	fmt.Printf("z: %v\n", z[0][0].Coeffs[0])
+	utils.PrintVector("Delta: ", Delta)
+	utils.PrintVector("Signature: ", sig)
 
 	// Verify the signature
 	valid := Verify(r, sig, A, mu, b, c[0], Delta, betaDelta)
-
-	fmt.Printf("Delta: %v\n", Delta[0].Coeffs[0])
-	fmt.Println("Signature:")
-	for i, poly := range sig {
-		fmt.Printf("sig[%d]: %v\n", i, poly.Coeffs[0])
-	}
 
 	fmt.Printf("Signature Verification Result: %v\n", valid)
 }
@@ -185,8 +155,8 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 // Function to generate the secret-shared polynomials
 func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
-	gaussianParams := ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
-	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigma_e, Bound: e_bound}
+	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	// Sample the secret key from the ring
 	s := make([]*ring.Poly, n)
@@ -196,10 +166,7 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		s[i] = &element
 	}
 
-	fmt.Println("Vector s:")
-	for i, poly := range s {
-		fmt.Printf("s[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
-	}
+	utils.PrintVector("s: ", s)
 
 	// Sample the error from the Gaussian distribution
 	e := make([]*ring.Poly, m)
@@ -209,7 +176,6 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		e[i] = &element
 	}
 
-	fmt.Println("Vector e:")
 	for i, poly := range e {
 		fmt.Printf("e[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
 	}
@@ -218,23 +184,27 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 	b := make([]*ring.Poly, m)
 
 	// Compute b = As + e mod q
-	for i := 0; i < m; i++ {
-		// Initialize b[i] as a new zero polynomial by taking the address of the result from r.NewPoly()
-		newPoly := r.NewPoly()
-		b[i] = &newPoly
 
-		// Compute A*s for row i
-		for j := 0; j < n; j++ {
-			// Compute A[i][j] * s[j] mod q and add it to b[i]
+	utils.MatrixVectorMul(r, A, s, b)
+	utils.VectorAdd(r, b, e, b)
 
-			newPoly := r.NewPoly()
-			MulPoly(r, (*A)[i][j], s[j], &newPoly)
-			r.Add(*b[i], newPoly, *b[i])
-		}
+	// for i := 0; i < m; i++ {
+	// 	// Initialize b[i] as a new zero polynomial by taking the address of the result from r.NewPoly()
+	// 	newPoly := r.NewPoly()
+	// 	b[i] = &newPoly
 
-		// Add e[i] to b[i] mod q
-		r.Add(*b[i], *e[i], *b[i])
-	}
+	// 	// Compute A*s for row i
+	// 	for j := 0; j < n; j++ {
+	// 		// Compute A[i][j] * s[j] mod q and add it to b[i]
+
+	// 		newPoly := r.NewPoly()
+	// 		utils.MulPoly(r, (*A)[i][j], s[j], &newPoly)
+	// 		r.Add(*b[i], newPoly, *b[i])
+	// 	}
+
+	// 	// Add e[i] to b[i] mod q
+	// 	r.Add(*b[i], *e[i], *b[i])
+	// }
 
 	// Secret-share s
 	// sharesCoeffs := make([][][]*big.Int, k)
@@ -350,8 +320,8 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(skHash)
-	gaussianParams := ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
-	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaStar, Bound: boundStar}
+	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	// Sample the error from the Gaussian distribution
 	e_star := make([]*ring.Poly, m)
@@ -372,8 +342,8 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	// Sample the E_i matrix
-	gaussianParams = ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
-	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	gaussianParams = ring.DiscreteGaussian{Sigma: sigmaE, Bound: boundE}
+	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, false)
 	E_i := make([][]*ring.Poly, m)
 	for i := 0; i < m; i++ {
 		E_i[i] = make([]*ring.Poly, d-1)
@@ -383,7 +353,6 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		}
 	}
 
-	// Compute D_i here
 	// Initialize D_i as m x d matrix of polynomials
 	D_i := make([][]*ring.Poly, m)
 	for i := range D_i {
@@ -404,12 +373,10 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		concatenatedE[i] = append([]*ring.Poly{e_star[i]}, E_i[i]...)
 	}
 
-	fmt.Printf("concatenated E:\n")
-	for i, poly := range concatenatedE[0] {
-		fmt.Printf("\tE[%d]: %v\n", i, poly.Coeffs[0])
-	}
+	utils.PrintMatrix("concatE: ", &concatenatedE)
 
 	// Compute D_i = A(concatenatedR) + concatenatedE
+
 	for i := 0; i < m; i++ {
 		for j := 0; j < d; j++ {
 			newPoly := r.NewPoly()
@@ -417,13 +384,15 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 			for k := 0; k < len(concatenatedR); k++ {
 				// Multiply A[i][k] with concatenatedR[k][j] and accumulate
 				tempPoly := r.NewPoly()
-				MulPoly(r, (*A)[i][k], concatenatedR[k][j], &tempPoly)
+				utils.MulPoly(r, (*A)[i][k], concatenatedR[k][j], &tempPoly)
 				r.Add(newPoly, tempPoly, newPoly)
 			}
 			// Add the result of A * concatenatedR with concatenatedE
 			r.Add(newPoly, *concatenatedE[i][j], *D_i[i][j])
 		}
 	}
+
+	//TODO: fix
 
 	return &D_i, mask, &concatenatedR
 }
@@ -462,7 +431,7 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 				// Compute D_j[i][k] * u_j[k] mod q and add it to h[j][i]
 				tempPoly := r.NewPoly()
 
-				MulPoly(r, (*D_j)[i][k], u[j][k], &tempPoly)
+				utils.MulPoly(r, (*D_j)[i][k], u[j][k], &tempPoly)
 				r.Add(*h[j], tempPoly, *h[j])
 			}
 		}
@@ -472,11 +441,7 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	for _, poly := range h {
 		RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	fmt.Println("Original h:")
-	for i, poly := range h {
-		fmt.Println(len(h))
-		fmt.Printf("Original h[%d]: %v\n", i, poly.Coeffs[0])
-	}
+
 	// c = H_c
 	c := H_c(r, A, b, h, mu)
 
@@ -498,7 +463,7 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	z_i := make([]*ring.Poly, len(s_i))
 	for index, poly := range s_i {
 		finalPoly := r.NewPoly()
-		MulPoly(r, poly, c, &finalPoly) // s_i_elem * c
+		utils.MulPoly(r, poly, c, &finalPoly) // s_i_elem * c
 		// r.Mul(finalPoly, *lambda_T_i, finalPoly) // (s_i_elem * c) * lambda_T_i TODO, add back when adding lagrange
 
 		// Calculate (concatR_i * u_i) mod q for this poly
@@ -506,8 +471,8 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 		for j := 0; j < len((*concatR_i)[partyInt]); j++ {
 			temp := r.NewPoly()
 
-			MulPoly(r, (*concatR_i)[partyInt][j], u[partyInt][j], &temp) // concatR_i_elem * u_i_elem
-			r.Add(weightedSum, temp, weightedSum)                        // Accumulate
+			utils.MulPoly(r, (*concatR_i)[partyInt][j], u[partyInt][j], &temp) // concatR_i_elem * u_i_elem
+			r.Add(weightedSum, temp, weightedSum)                              // Accumulate
 		}
 
 		// Combine all terms
@@ -594,8 +559,8 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	gaussianParams := ring.DiscreteGaussian{Sigma: sigma, Bound: bound}
-	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaU, Bound: boundU}
+	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	u_j := make([]*ring.Poly, d-1)
 	for i := 0; i < d-1; i++ {
@@ -702,7 +667,7 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 
 	ternaryParams := ring.Ternary{H: kappa}
-	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, true)
+	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, false)
 	if err != nil {
 		log.Fatalf("Error creating ternary sampler: %v", err)
 	}
@@ -762,7 +727,7 @@ func GenLagrangeCoefficients(r *ring.Ring, T []int) []*ring.Poly {
 
 				// Multiply l_j by (x - xm)
 				resultPoly := r.NewPoly()
-				MulPoly(r, &l_j, &tempPoly, &resultPoly)
+				utils.MulPoly(r, &l_j, &tempPoly, &resultPoly)
 
 				l_j = resultPoly
 			}
@@ -814,7 +779,7 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 		Az[i] = &newPoly
 		for k := 0; k < n; k++ {
 			temp := r.NewPoly()
-			MulPoly(r, (*A)[i][k], z_sum[k], &temp)
+			utils.MulPoly(r, (*A)[i][k], z_sum[k], &temp)
 			r.Add(*Az[i], temp, *Az[i])
 		}
 	}
@@ -829,7 +794,7 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 		bc[i] = &newPoly
 		newPoly = r.NewPoly()
 		Az_bc[i] = &newPoly
-		MulPoly(r, b[i], c, bc[i])
+		utils.MulPoly(r, b[i], c, bc[i])
 
 		r.Sub(*Az[i], *bc[i], *Az_bc[i]) // Az[i] - bc[i]
 	}
@@ -854,41 +819,54 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, m map[int][]*ring.Poly, 
 
 func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta []*ring.Poly, betaDelta uint64) bool {
 	// Calculate [Az - bc]_p + Delta
-	computedH := make([]*ring.Poly, len(z))
-	for i := range computedH {
-		newPoly := r.NewPoly()
-		computedH[i] = &newPoly
-		for k := range z {
-			temp := r.NewPoly()
-			MulPoly(r, (*A)[i][k], z[k], &temp)
-			r.Add(*computedH[i], temp, *computedH[i])
-		}
-	}
+	// computedH := make([]*ring.Poly, len(z))
+	// for i := range computedH {
+	// 	newPoly := r.NewPoly()
+	// 	computedH[i] = &newPoly
+	// 	for k := range z {
+	// 		temp := r.NewPoly()
+	// 		MulPoly(r, (*A)[i][k], z[k], &temp)
+	// 		r.Add(*computedH[i], temp, *computedH[i])
+	// 	}
+	// }
 
-	bc := make([]*ring.Poly, len(b))
-	for i, bi := range b {
-		newPoly := r.NewPoly()
-		bc[i] = &newPoly
-		MulPoly(r, bi, c, bc[i])                         // Compute b_i * c
-		r.Sub(*computedH[i], *bc[i], *computedH[i])      // Compute Az_i - b_i*c
-		RoundCoeffsToNearestMultiple(r, computedH[i], p) // Round to nearest multiple of p
-	}
+	// bc := make([]*ring.Poly, len(b))
+	// for i, bi := range b {
+	// 	newPoly := r.NewPoly()
+	// 	bc[i] = &newPoly
+	// 	MulPoly(r, bi, c, bc[i])                         // Compute b_i * c
+	// 	r.Sub(*computedH[i], *bc[i], *computedH[i])      // Compute Az_i - b_i*c
+	// 	RoundCoeffsToNearestMultiple(r, computedH[i], p) // Round to nearest multiple of p
+	// }
 
-	for i, poly := range computedH {
-		fmt.Printf("Computed h[%d]: %v\n", i, poly.Coeffs[0])
-	}
+	// Compute Az using MatrixVectorMul
+	Az := make([]*ring.Poly, m)
+	utils.MatrixVectorMul(r, A, z, Az)
 
-	// TODO: Confirm
-	for j := range Delta {
-		r.Add(*computedH[j], *Delta[j], *computedH[j])
+	// Compute bc using VectorPolyMul
+	bc := make([]*ring.Poly, m)
+	utils.VectorPolyMul(r, b, c, bc)
+
+	// Subtract bc from Az to get Az_bc
+	Az_bc := make([]*ring.Poly, m)
+	utils.VectorSub(r, Az, bc, Az_bc)
+
+	utils.PrintVector("Az - bc: ", Az_bc)
+
+	// Round Az_bc to the nearest multiple of p
+	for _, poly := range Az_bc {
+		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
+	utils.PrintVector("Rounded Az_bc: ", Az_bc)
+
+	Az_bc_Delta := make([]*ring.Poly, m)
+	utils.VectorAdd(r, Az_bc, Delta, Az_bc_Delta)
+
+	utils.PrintVector("Rounded Az_bc_delta: ", Az_bc_Delta)
 
 	// Verify that c equals H_c([Az - bc]_p + Delta, mu)
-	computedC := H_c(r, A, b, computedH, mu)
+	computedC := H_c(r, A, b, Az_bc_Delta, mu)
 	if !r.Equal(*c, *computedC) {
-		fmt.Println("")
-		fmt.Printf("This was the computed c: %v\n", computedC)
-		fmt.Printf("This was the original c: %v\n", c)
 		return false
 	}
 
@@ -924,61 +902,3 @@ func checkInfinityNorm(r *ring.Ring, Delta []*ring.Poly, betaDelta uint64) bool 
 	// Check if the maximum absolute value is less than or equal to betaDelta
 	return maxValue.Cmp(betaDeltaBig) <= 0
 }
-
-// TODO: Make this general to other rings which are larger
-// polyMultInCyclotomicRing multiplies two polynomials within the cyclotomic ring x^8 + 1 and returns the result.
-// Each polynomial is represented as a slice of big.Int pointers, sorted from least to most significant.
-func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
-	degree := 8 // Since we are in a ring modulo x^8 + 1
-	// Initialize result slice with big.Ints set to zero
-	result := make([]*big.Int, degree)
-	for i := range result {
-		result[i] = big.NewInt(0)
-	}
-
-	p1Coeffs := make([]*big.Int, degree)
-	r.PolyToBigint(*p1, 1, p1Coeffs)
-
-	p2Coeffs := make([]*big.Int, degree)
-	r.PolyToBigint(*p2, 1, p2Coeffs)
-
-	// Polynomial multiplication (convolution)
-	for i := range p1Coeffs {
-		for j := range p2Coeffs {
-			if i+j < degree {
-				// Multiply coefficients and add to the right place
-				temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
-				result[i+j].Add(result[i+j], temp)
-			} else {
-				if (((i+j)-((i+j)%degree))/8)%2 == 0 {
-					// Wrap around due to cyclotomic ring, i+j >= degree
-					temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
-					result[(i+j)%degree].Add(result[(i+j)%degree], temp)
-				} else {
-					// Wrap around due to cyclotomic ring, i+j >= degree
-					temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
-					result[(i+j)%degree].Sub(result[(i+j)%degree], temp) // subtracting because of x^8 + 1
-				}
-			}
-		}
-	}
-
-	// Reduce each coefficient modulo q
-	for i := range result {
-		result[i].Mod(result[i], big.NewInt(int64(q)))
-	}
-
-	r.SetCoefficientsBigint(result, *p3)
-}
-
-// // Sets p3 = p1 * p2 by first converting into NTT, using montgomery multiplication, and then converting out of NTT with INTT
-// func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
-// 	r.NTT(*p1, *p1)
-// 	r.NTT(*p2, *p2)
-// 	r.NTT(*p3, *p3)
-// 	r.MulCoeffsMontgomery(*p1, *p2, *p3)
-// 	r.INTT(*p1, *p1)
-// 	r.INTT(*p2, *p2)
-// 	r.INTT(*p3, *p3)
-// 	// fmt.Printf("New multiplied polynomial: %v\\", p3)
-// }

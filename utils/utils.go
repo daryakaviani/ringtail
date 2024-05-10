@@ -100,6 +100,63 @@ func MatrixVectorMul(r *ring.Ring, M *[][]*ring.Poly, vec []*ring.Poly, result [
 	}
 }
 
+// MatrixMatrixMul performs matrix-matrix multiplication.
+// It takes two matrices of ring.Poly pointers, M1 of dimensions m x p and M2 of dimensions p x n,
+// and outputs the result in a given result matrix of dimensions m x n.
+func MatrixMatrixMul(r *ring.Ring, M1, M2 *[][]*ring.Poly, result *[][]*ring.Poly) {
+	if M1 == nil || M2 == nil || len(*M1) == 0 || len(*M2) == 0 || len((*M1)[0]) != len(*M2) {
+		log.Fatalf("Matrix dimensions are not compatible for multiplication.")
+		return
+	}
+
+	m := len(*M1)
+	p := len((*M1)[0]) // Assuming all rows in M1 are of the same length
+	n := len((*M2)[0]) // Assuming all rows in M2 are of the same length
+
+	// Initialize the result matrix with zeros
+	for i := 0; i < m; i++ {
+		(*result)[i] = make([]*ring.Poly, n)
+		for j := 0; j < n; j++ {
+			newPoly := r.NewPoly()
+			(*result)[i][j] = &newPoly
+		}
+	}
+
+	// Perform matrix multiplication
+	for i := 0; i < m; i++ {
+		for j := 0; j < n; j++ {
+			for k := 0; k < p; k++ {
+				temp := r.NewPoly()
+				MulPoly(r, (*M1)[i][k], (*M2)[k][j], &temp)
+				r.Add(*(*result)[i][j], temp, *(*result)[i][j])
+			}
+		}
+	}
+}
+
+// MatrixAdd adds two matrices of ring.Poly element-wise and stores the result in a given result matrix.
+func MatrixAdd(r *ring.Ring, M1, M2, result *[][]*ring.Poly) {
+	if M1 == nil || M2 == nil || len(*M1) == 0 || len(*M2) == 0 || len(*M1) != len(*M2) || len((*M1)[0]) != len((*M2)[0]) {
+		log.Fatalf("Matrix dimensions must match for element-wise addition.")
+		return
+	}
+
+	m := len(*M1)      // Number of rows
+	n := len((*M1)[0]) // Number of columns
+
+	// Ensure the result matrix is initialized
+	for i := 0; i < m; i++ {
+		(*result)[i] = make([]*ring.Poly, n)
+		for j := 0; j < n; j++ {
+			if (*result)[i][j] == nil {
+				newPoly := r.NewPoly()
+				(*result)[i][j] = &newPoly
+			}
+			r.Add(*(*M1)[i][j], *(*M2)[i][j], *(*result)[i][j])
+		}
+	}
+}
+
 // VectorPolyMul performs element-wise multiplication of a vector by a polynomial.
 // It takes a vector of ring.Poly pointers, a single ring.Poly pointer, and outputs the result in a given result vector.
 func VectorPolyMul(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ring.Poly) {
