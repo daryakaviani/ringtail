@@ -15,26 +15,25 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-const m = 20
-const n = 20
+const m = 10
+const n = 10
 const p = 2  // TODO: Experiment
 const t = 1  // Active threshold
 const k = 1  // Total number of parties
-const d = 20 // Length of joint noise vector
+const d = 10 // Length of joint noise vector
 const ell = 1
 const beta = 10
 const betaDelta = 3291932728626317921
 const kappa = 10
 const logN = 3
-const sigma = 0
-const bound = 0
+const sigma = 1
+const bound = 1
 
 var q = uint64(61)
 
 // var q = ring.Qi60[0]
 
 func main() {
-	fmt.Print(q)
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
 	prng, _ := sampling.NewKeyedPRNG([]byte("0")) // TODO: Change to random key for the PRNG seeing
 	uniformSampler := ring.NewUniformSampler(prng, r)
@@ -431,14 +430,24 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 
 // Sign function signs a message using the secret key and returns the signature
 func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
-	// Create the noise matrix u
+	// // Create the noise matrix u
+	// u := make([][]*ring.Poly, m)
+	// onePoly := r.NewMonomialXi(0)
+
+	// for j := 0; j < m; j++ {
+	// 	oneSlice := []*ring.Poly{onePoly.CopyNew()}
+	// 	u_j := H_u(r, A, b, sid, j, DMap, mu, mMap)
+	// 	u[j] = append(oneSlice, u_j...)
+	// }
+	// Create the noise matrix u, now simplified to use onePoly for all elements
 	u := make([][]*ring.Poly, m)
-	onePoly := r.NewMonomialXi(0)
+	onePoly := r.NewMonomialXi(0) // Assumes onePoly is defined as a monomial of degree 0 (constant polynomial of 1)
 
 	for j := 0; j < m; j++ {
-		oneSlice := []*ring.Poly{onePoly.CopyNew()}
-		u_j := H_u(r, A, b, sid, j, DMap, mu, mMap)
-		u[j] = append(oneSlice, u_j...)
+		u[j] = make([]*ring.Poly, d) // Ensure u[j] has d entries
+		for k := 0; k < d; k++ {
+			u[j][k] = onePoly.CopyNew() // Each entry of u is just a copy of onePoly
+		}
 	}
 
 	h := make([]*ring.Poly, m)
@@ -665,7 +674,7 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 		buffer.Write(data)
 	}
 
-	// Handle slice b
+	// Handle slice h
 	for _, poly := range h {
 		data, err := poly.MarshalBinary()
 		if err != nil {
