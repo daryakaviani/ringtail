@@ -36,18 +36,18 @@ func main() {
 
 	// Setup
 	A := BCMSetup(r, uniformSampler)
-	printMatrix("Matrix A:", A)
+	PrintMatrix("Matrix A:", A)
 
 	// Key Generation
 	s, b := BCMGen(r, A, uniformSampler, gaussianSampler)
-	printVector("Vector s:", s)
-	printVector("Vector b:", b)
+	PrintVector("Vector s:", s)
+	PrintVector("Vector b:", b)
 
 	// Signing a message
 	mu := "Hello, BCM!"
 	c, z := BCMSign(r, uniformSampler, A, s, b, mu)
-	printPolynomial("Polynomial c:", c)
-	printVector("Vector z:", z)
+	PrintPolynomial("Polynomial c:", c)
+	PrintVector("Vector z:", z)
 
 	// Verify the signature
 	valid := BCMVer(r, A, b, mu, c, z)
@@ -58,7 +58,7 @@ func main() {
 	}
 }
 
-func printMatrix(label string, matrix *[][]*ring.Poly) {
+func PrintMatrix(label string, matrix *[][]*ring.Poly) {
 	log.Println(label)
 	for i, row := range *matrix {
 		for j, poly := range row {
@@ -67,14 +67,14 @@ func printMatrix(label string, matrix *[][]*ring.Poly) {
 	}
 }
 
-func printVector(label string, vector []*ring.Poly) {
+func PrintVector(label string, vector []*ring.Poly) {
 	log.Println(label)
 	for i, poly := range vector {
 		log.Printf("[%d]: %v\n", i, poly.Coeffs[0])
 	}
 }
 
-func printPolynomial(label string, poly *ring.Poly) {
+func PrintPolynomial(label string, poly *ring.Poly) {
 	log.Println(label)
 	log.Printf("%v\n", poly.Coeffs[0])
 }
@@ -107,16 +107,8 @@ func BCMGen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler
 	}
 
 	b := make([]*ring.Poly, m)
-	for i := 0; i < m; i++ {
-		newPoly := r.NewPoly()
-		b[i] = &newPoly
-		for j := 0; j < n; j++ {
-			temp := r.NewPoly()
-			MulPoly(r, s[j], (*A)[i][j], &temp)
-			r.Add(*b[i], temp, *b[i])
-		}
-		r.Add(*b[i], *e[i], *b[i])
-	}
+	MatrixVectorMul(r, A, s, b)
+	VectorAdd(r, b, e, b)
 
 	return s, b
 }
@@ -132,13 +124,13 @@ func BCMSign(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Pol
 	// Compute h using the new helper function
 	h := make([]*ring.Poly, m)
 	MatrixVectorMul(r, A, rVec, h)
-	printVector("Original h: ", h)
+	PrintVector("Original h: ", h)
 
 	// Round h to the nearest multiple of p
 	for _, poly := range h {
 		RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	printVector("Rounded original h: ", h)
+	PrintVector("Rounded original h: ", h)
 
 	// Hash h and mu to obtain c
 	c := H(r, A, b, h, mu)
@@ -146,9 +138,7 @@ func BCMSign(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Pol
 	// Compute z using the new helper function
 	z := make([]*ring.Poly, n)
 	VectorPolyMul(r, s, c, z)
-	for i := range z {
-		r.Add(*z[i], *rVec[i], *z[i]) // z = sc + r
-	}
+	VectorAdd(r, z, rVec, z)
 
 	return c, z
 }
@@ -226,24 +216,20 @@ func BCMVer(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, mu string, c *ring.
 
 	// Subtract bc from Az to get Az_bc
 	Az_bc := make([]*ring.Poly, m)
-	for i := 0; i < m; i++ {
-		newPoly := r.NewPoly()
-		Az_bc[i] = &newPoly
-		r.Sub(*Az[i], *bc[i], *Az_bc[i])
-	}
+	VectorSub(r, Az, bc, Az_bc)
 
-	printVector("Az - bc: ", Az_bc)
+	PrintVector("Az - bc: ", Az_bc)
 
 	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
 		RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	printVector("Rounded Az_bc: ", Az_bc)
+	PrintVector("Rounded Az_bc: ", Az_bc)
 
 	// Hash Az_bc and mu to obtain a hash value
 	computedC := H(r, A, b, Az_bc, mu)
 
-	printPolynomial("Computed c: ", computedC)
+	PrintPolynomial("Computed c: ", computedC)
 
 	// Compare computed c with the provided c
 	return r.Equal(*computedC, *c)
@@ -344,5 +330,29 @@ func VectorPolyMul(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ri
 	for i := range vec {
 		result[i] = r.NewPoly().CopyNew()   // Initialize a new polynomial for each result entry
 		MulPoly(r, vec[i], poly, result[i]) // Multiply each vector element by the polynomial
+	}
+}
+
+// VectorAdd adds two vectors of ring.Poly element-wise and stores the result in a result vector.
+func VectorAdd(r *ring.Ring, v1, v2, result []*ring.Poly) {
+	for i := range v1 {
+		if result[i] == nil {
+			newPoly := r.NewPoly()
+			result[i] = &newPoly
+		}
+
+		r.Add(*v1[i], *v2[i], *result[i])
+	}
+}
+
+// VectorAdd subtracts two vectors of ring.Poly element-wise and stores the result in a result vector.
+func VectorSub(r *ring.Ring, v1, v2, result []*ring.Poly) {
+	for i := range v1 {
+		if result[i] == nil {
+			newPoly := r.NewPoly()
+			result[i] = &newPoly
+		}
+
+		r.Sub(*v1[i], *v2[i], *result[i])
 	}
 }
