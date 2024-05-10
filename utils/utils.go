@@ -146,7 +146,9 @@ func MatrixAdd(r *ring.Ring, M1, M2, result *[][]*ring.Poly) {
 
 	// Ensure the result matrix is initialized
 	for i := 0; i < m; i++ {
-		(*result)[i] = make([]*ring.Poly, n)
+		if (*result)[i] == nil {
+			(*result)[i] = make([]*ring.Poly, n)
+		}
 		for j := 0; j < n; j++ {
 			if (*result)[i][j] == nil {
 				newPoly := r.NewPoly()

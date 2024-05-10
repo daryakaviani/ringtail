@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+// PARAMETERS
 const (
 	m         = 1
 	n         = 1
@@ -50,7 +51,6 @@ func main() {
 
 	// Setup
 	A := Setup(uniformSampler)
-
 	utils.PrintMatrix("A: ", A)
 
 	// Gen
@@ -65,13 +65,6 @@ func main() {
 	skShares := make([][]*ring.Poly, 1)
 	skShares[0] = skShare
 
-	fmt.Println("Seeds:")
-	for i, seedRow := range seeds {
-		for j, seed := range seedRow {
-			fmt.Printf("Seed[%d][%d]: %x\n", i, j, seed) // Printing bytes as hex
-		}
-	}
-
 	utils.PrintVector("b: ", b)
 
 	// Test signing round 1 by simulating each of the parties
@@ -82,12 +75,10 @@ func main() {
 	mask := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
 	T := []int{0}
+	partyInt := 0
 	// lagrangeCoeffs := GenLagrangeCoefficients(r, T)
 
-	for i := 0; i < m; i++ {
-		// TODO: Change this to be a different seed per user pair
-		D[i], mask[i], concatR[i] = SignRound1(r, uniformSampler, A, i, sid, skShares[0], mu, []byte(PRFKey), seeds[0], T)
-	}
+	D[partyInt], mask[partyInt], concatR[partyInt] = SignRound1(r, uniformSampler, A, partyInt, sid, skShares[0], mu, []byte(PRFKey), (*seeds)[0], T)
 
 	for key, matrix := range D {
 		utils.PrintMatrix("D_"+fmt.Sprint(key), matrix)
@@ -107,7 +98,7 @@ func main() {
 	h := make(map[int][]*ring.Poly)
 
 	for i := 0; i < m; i++ {
-		z[i], c[i], h[i] = SignRound2(r, i, D, nil, A, b, skShares[0], sid, mu, T, []byte(PRFKey), seeds, concatR[i], nil)
+		z[i], c[i], h[i] = SignRound2(r, i, D, nil, A, b, skShares[0], sid, mu, T, []byte(PRFKey), (*seeds)[i], concatR[i], nil)
 	}
 
 	// After computation in SignRound2
@@ -153,58 +144,30 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 }
 
 // Function to generate the secret-shared polynomials
-func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, [][][]byte, []*ring.Poly) {
+func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) ([]*ring.Poly, *map[int][][]byte, []*ring.Poly) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
 	gaussianParams := ring.DiscreteGaussian{Sigma: sigma_e, Bound: e_bound}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
-	// Sample the secret key from the ring
 	s := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
-		// Generate a new ring element
 		element := uniformSampler.ReadNew()
 		s[i] = &element
 	}
-
 	utils.PrintVector("s: ", s)
 
-	// Sample the error from the Gaussian distribution
+	// Sample the error from the Gaussian
 	e := make([]*ring.Poly, m)
 	for i := 0; i < m; i++ {
-		// Generate a new ring element from the Gaussian distribution
 		element := gaussianSampler.ReadNew()
 		e[i] = &element
 	}
-
-	for i, poly := range e {
-		fmt.Printf("e[%d]: %v\n", i, poly.Coeffs[0]) // Accessing the underlying slice
-	}
-
-	// Initialize result vector
-	b := make([]*ring.Poly, m)
+	utils.PrintVector("e: ", e)
 
 	// Compute b = As + e mod q
-
+	b := make([]*ring.Poly, m)
 	utils.MatrixVectorMul(r, A, s, b)
 	utils.VectorAdd(r, b, e, b)
-
-	// for i := 0; i < m; i++ {
-	// 	// Initialize b[i] as a new zero polynomial by taking the address of the result from r.NewPoly()
-	// 	newPoly := r.NewPoly()
-	// 	b[i] = &newPoly
-
-	// 	// Compute A*s for row i
-	// 	for j := 0; j < n; j++ {
-	// 		// Compute A[i][j] * s[j] mod q and add it to b[i]
-
-	// 		newPoly := r.NewPoly()
-	// 		utils.MulPoly(r, (*A)[i][j], s[j], &newPoly)
-	// 		r.Add(*b[i], newPoly, *b[i])
-	// 	}
-
-	// 	// Add e[i] to b[i] mod q
-	// 	r.Add(*b[i], *e[i], *b[i])
-	// }
 
 	// Secret-share s
 	// sharesCoeffs := make([][][]*big.Int, k)
@@ -250,17 +213,16 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 	// 	}
 	// }
 
-	// Generate random seeds for i, j in [d]
-	seeds := make([][][]byte, k)
+	// Generate random seeds for all possible i, j
+	seeds := make(map[int][][]byte)
 	for i := 0; i < k; i++ {
 		seeds[i] = make([][]byte, k)
 		for j := 0; j < k; j++ {
-			// Generate random seed sd
 			seeds[i][j] = generateRandomSeed()
 		}
 	}
 
-	return s, seeds, b
+	return s, &seeds, b
 }
 
 func generateRandomSeed() []byte {
@@ -281,7 +243,6 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		newPoly := r.NewPoly()
 		mask[i] = &newPoly
 	}
-
 	for _, j := range T {
 		sd_ij := seeds_i[j]
 		mask_j := PRF(r, sid, sd_ij, PRFKey)
@@ -290,43 +251,20 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		}
 	}
 
-	// Sample the error from the Gaussian distribution
+	// Sample r*
 	r_star := make([]*ring.Poly, n)
 	for i := 0; i < n; i++ {
-		// Generate a new ring element from the Gaussian distribution
 		element := uniformSampler.ReadNew()
 		r_star[i] = &element
 	}
 
-	hasher := sha3.NewShake128()
-	// Buffer to store all concatenated bytes
-	var buffer bytes.Buffer
-	// Handle slice sk
-	for _, poly := range skShare {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
-	}
-
-	hasher.Write(buffer.Bytes())
-
-	hashOutputLength := n // TODO: Check
-	skHash := make([]byte, hashOutputLength)
-	_, err := hasher.Read(skHash)
-	if err != nil {
-		log.Fatalf("Error reading hash: %v\n", err)
-	}
-
+	// Sample e*
+	skHash := userPRNGKey(skShare)
 	prng, _ := sampling.NewKeyedPRNG(skHash)
 	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaStar, Bound: boundStar}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
-
-	// Sample the error from the Gaussian distribution
 	e_star := make([]*ring.Poly, m)
 	for i := 0; i < m; i++ {
-		// Generate a new ring element from the Gaussian distribution
 		element := gaussianSampler.ReadNew()
 		e_star[i] = &element
 	}
@@ -353,52 +291,28 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 		}
 	}
 
-	// Initialize D_i as m x d matrix of polynomials
-	D_i := make([][]*ring.Poly, m)
-	for i := range D_i {
-		D_i[i] = make([]*ring.Poly, d)
-		for j := range D_i[i] {
-			newPoly := r.NewPoly()
-			D_i[i][j] = &newPoly
-		}
-	}
-
 	// Concatenate r_i_star with R_i, and e_i_star with E_i
 	concatenatedR := make([][]*ring.Poly, n)
 	concatenatedE := make([][]*ring.Poly, m)
+
 	for i := 0; i < n; i++ {
 		concatenatedR[i] = append([]*ring.Poly{r_star[i]}, R_i[i]...)
 	}
 	for i := 0; i < m; i++ {
 		concatenatedE[i] = append([]*ring.Poly{e_star[i]}, E_i[i]...)
 	}
-
 	utils.PrintMatrix("concatE: ", &concatenatedE)
 
 	// Compute D_i = A(concatenatedR) + concatenatedE
+	D := make([][]*ring.Poly, m)
+	utils.MatrixMatrixMul(r, A, &concatenatedR, &D)
+	utils.MatrixAdd(r, &concatenatedE, &D, &D)
 
-	for i := 0; i < m; i++ {
-		for j := 0; j < d; j++ {
-			newPoly := r.NewPoly()
-
-			for k := 0; k < len(concatenatedR); k++ {
-				// Multiply A[i][k] with concatenatedR[k][j] and accumulate
-				tempPoly := r.NewPoly()
-				utils.MulPoly(r, (*A)[i][k], concatenatedR[k][j], &tempPoly)
-				r.Add(newPoly, tempPoly, newPoly)
-			}
-			// Add the result of A * concatenatedR with concatenatedE
-			r.Add(newPoly, *concatenatedE[i][j], *D_i[i][j])
-		}
-	}
-
-	//TODO: fix
-
-	return &D_i, mask, &concatenatedR
+	return &D, mask, &concatenatedR
 }
 
 // Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
+func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds [][]byte, concatR_i *[][]*ring.Poly, lambda_T_i *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
 	// // Create the noise matrix u
 	// u := make([][]*ring.Poly, m)
 	// onePoly := r.NewMonomialXi(0)
@@ -901,4 +815,28 @@ func checkInfinityNorm(r *ring.Ring, Delta []*ring.Poly, betaDelta uint64) bool 
 
 	// Check if the maximum absolute value is less than or equal to betaDelta
 	return maxValue.Cmp(betaDeltaBig) <= 0
+}
+
+func userPRNGKey(skShare []*ring.Poly) []byte {
+	hasher := sha3.NewShake128()
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+	// Handle slice sk
+	for _, poly := range skShare {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
+
+	hasher.Write(buffer.Bytes())
+
+	hashOutputLength := n // TODO: Check
+	skHash := make([]byte, hashOutputLength)
+	_, err := hasher.Read(skHash)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+	return skHash
 }
