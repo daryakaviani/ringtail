@@ -7,8 +7,6 @@ import (
 	"github.com/tuneinsight/lattigo/v5/ring"
 )
 
-var q = ring.Qi60[0]
-
 const logN = 3
 
 // TODO: Make this general to other rings which are larger
@@ -16,6 +14,8 @@ const logN = 3
 // Each polynomial is represented as a slice of big.Int pointers, sorted from least to most significant.
 func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 	degree := 1 << logN // Since we are in a ring modulo x^8 + 1
+
+	q := r.Modulus()
 	// Initialize result slice with big.Ints set to zero
 	result := make([]*big.Int, degree)
 	for i := range result {
@@ -51,7 +51,7 @@ func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 
 	// Reduce each coefficient modulo q
 	for i := range result {
-		result[i].Mod(result[i], big.NewInt(int64(q)))
+		result[i].Mod(result[i], q)
 	}
 
 	r.SetCoefficientsBigint(result, *p3)
@@ -163,7 +163,10 @@ func MatrixAdd(r *ring.Ring, M1, M2, result *[][]*ring.Poly) {
 // It takes a vector of ring.Poly pointers, a single ring.Poly pointer, and outputs the result in a given result vector.
 func VectorPolyMul(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ring.Poly) {
 	for i := range vec {
-		result[i] = r.NewPoly().CopyNew()   // Initialize a new polynomial for each result entry
+		if result[i] == nil {
+			newPoly := r.NewPoly()
+			result[i] = &newPoly
+		}
 		MulPoly(r, vec[i], poly, result[i]) // Multiply each vector element by the polynomial
 	}
 }
