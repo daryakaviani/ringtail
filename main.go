@@ -18,16 +18,16 @@ import (
 
 // PARAMETERS
 const (
-	m = 2
-	n = 2
-	d = 2 // Length of joint noise vector
+	m = 10
+	n = 10
+	d = 10 // Length of joint noise vector
 
 	p         = 2
-	t         = 2 // Active threshold
+	t         = 3 // Active threshold
 	k         = 5 // Total number of parties
 	ell       = 1
 	beta      = 10
-	betaDelta = 3291932728626317921
+	betaDelta = 10
 	kappa     = 1000
 	logN      = 3
 	bound_e   = 0
@@ -43,9 +43,9 @@ const (
 	keySize   = 30
 )
 
-var q = uint64(61)
+// var q = uint64(61)
 
-// var q = ring.Qi60[0]
+var q = ring.Qi60[0]
 
 func main() {
 	randomKey := make([]byte, keySize)
@@ -71,14 +71,8 @@ func main() {
 	concatR := make(map[int]*[][]*ring.Poly)
 	mask := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
-	T := []int{0, 1}
+	T := []int{0, 1, 2}
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
-
-	// // Reconstruct s from shares
-	// reconstructedS := ReconstructSecret(r, skShares, lagrangeCoeffs)
-
-	// // Print original and reconstructed s for comparison
-	// utils.PrintVector("Reconstructed s: ", reconstructedS)
 
 	for partyInt := 0; partyInt < len(T); partyInt++ {
 		utils.PrintPolynomial("Lagrange:", lagrangeCoeffs[partyInt])
@@ -601,7 +595,6 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 	for i := 0; i < n; i++ {
 		element := PRFUniformSampler.ReadNew()
 		mask[i] = &element
-		mask[i] = r.NewPoly().CopyNew() // WORK
 	}
 
 	return mask
