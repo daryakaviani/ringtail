@@ -214,7 +214,7 @@ func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []b
 	}
 
 	// Sample e*
-	skHash := party.UserPRNGKey()
+	skHash := party.PRNGKey()
 	prng, _ := sampling.NewKeyedPRNG(skHash)
 	gaussianParams := ring.DiscreteGaussian{}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
@@ -480,10 +480,10 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D *map
 	}
 
 	// Handle integer sid
-	binary.Write(&buffer, binary.BigEndian, sid)
+	binary.Write(&buffer, binary.BigEndian, int64(sid))
 
 	// Handle integer j
-	binary.Write(&buffer, binary.BigEndian, j)
+	binary.Write(&buffer, binary.BigEndian, int64(j))
 
 	// Handle map of matrices D
 	for _, D_h := range *D {
@@ -554,7 +554,7 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) []*ring.Poly {
 	binary.Write(&buffer, binary.BigEndian, sd_ij)
 
 	// Handle integer sid
-	binary.Write(&buffer, binary.BigEndian, sid)
+	binary.Write(&buffer, binary.BigEndian, int64(sid))
 
 	// Write the final concatenated data to the hasher
 	_, err := hasher.Write(buffer.Bytes())
@@ -618,7 +618,7 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 	}
 
 	// Handle string mu
-	binary.Write(&buffer, binary.BigEndian, mu)
+	binary.Write(&buffer, binary.BigEndian, []byte(mu))
 
 	// Write the final concatenated data to the hasher
 	_, err := hasher.Write(buffer.Bytes())
@@ -738,7 +738,7 @@ func ComputeLagrangeCoefficients(r *ring.Ring, T []int, modulus *big.Int) map[in
 	return lagrangeCoefficients
 }
 
-func (party *Party) UserPRNGKey() []byte {
+func (party *Party) PRNGKey() []byte {
 	skShare := party.SkShare
 
 	hasher := sha3.NewShake128()
