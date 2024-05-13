@@ -24,8 +24,8 @@ const (
 	d = 10 // Length of joint noise vector
 
 	p         = 2
-	t         = 1 // Active threshold
-	k         = 1 // Total number of parties
+	t         = 4  // Active threshold
+	k         = 10 // Total number of parties
 	ell       = 1
 	beta      = 10
 	betaDelta = 10
@@ -105,7 +105,7 @@ func main() {
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	PRFKey := "PRF Key"
-	T := []int{0} // Active parties
+	T := []int{0, 1, 2, 3} // Active parties
 	start = time.Now()
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
 	D := make(map[int]*[][]*ring.Poly)
@@ -454,8 +454,11 @@ func CheckInfinityNorm(r *ring.Ring, Delta *[]*ring.Poly, betaDelta uint64) bool
 	maxValue := big.NewInt(0) // Temporary variable to store the maximum value found
 
 	for _, poly := range *Delta {
-		coeffsBigint := make([]*big.Int, poly.N())
-		r.PolyToBigint(*poly, 1, coeffsBigint)
+		coeffsBigint := make([]*big.Int, r.N())
+		for i := range coeffsBigint {
+			coeffsBigint[i] = big.NewInt(0)
+		}
+		r.PolyToBigintCentered(*poly, 1, coeffsBigint)
 
 		for _, coeff := range coeffsBigint {
 			absCoeff := new(big.Int).Abs(coeff) // Get the absolute value of the coefficient
@@ -465,7 +468,6 @@ func CheckInfinityNorm(r *ring.Ring, Delta *[]*ring.Poly, betaDelta uint64) bool
 		}
 	}
 
-	// Convert betaDelta to big.Int for comparison
 	betaDeltaBig := new(big.Int).SetUint64(betaDelta)
 
 	log.Print("DELTA NORM:", maxValue)

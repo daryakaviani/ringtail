@@ -202,6 +202,39 @@ func VectorAdd(r *ring.Ring, v1, v2, result []*ring.Poly) {
 	}
 }
 
+// // PolyToBigintCentered reconstructs p1 and returns the result in an array of Int.
+// // Coefficients are centered around Q/2
+// // gap defines coefficients X^{i*gap} that will be reconstructed.
+// // For example, if gap = 1, then all coefficients are reconstructed, while
+// // if gap = 2 then only coefficients X^{2*i} are reconstructed.
+// func PolyToBigintCentered(r *ring.Ring, p1 *ring.Poly, coeffsBigint []*big.Int) {
+
+// 	modulusBigintHalf := new(big.Int)
+// 	modulusBigintHalf.Rsh(r.Modulus(), 1)
+
+// 	N := r.N()
+
+// 	var sign int
+// 	for i, j := 0, 0; j < N; i, j = i+1, j+1 {
+
+// 		tmp.SetUint64(0)
+// 		coeffsBigint[i].SetUint64(0)
+
+// 		for k := 0; k < r.level+1; k++ {
+// 			coeffsBigint[i].Add(coeffsBigint[i], tmp.Mul(bignum.NewInt(p1.Coeffs[k][j]), crtReconstruction[k]))
+// 		}
+
+// 		coeffsBigint[i].Mod(coeffsBigint[i], modulusBigint)
+
+// 		// Centers the coefficients
+// 		sign = coeffsBigint[i].Cmp(modulusBigintHalf)
+
+// 		if sign == 1 || sign == 0 {
+// 			coeffsBigint[i].Sub(coeffsBigint[i], modulusBigint)
+// 		}
+// 	}
+// }
+
 // VectorAdd subtracts two vectors of ring.Poly element-wise and stores the result in a result vector.
 func VectorSub(r *ring.Ring, v1, v2, result []*ring.Poly) {
 	for i := range v1 {
