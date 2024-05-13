@@ -95,14 +95,14 @@ func main() {
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	PRFKey := "PRF Key"
-	T := []int{0, 1, 2, 3, 4} // Active parties
+	T := []int{0, 1, 2, 3, 7} // Active parties
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
 	D := make(map[int]*[][]*ring.Poly)
 	masks := make(map[int]*[]*ring.Poly)
 
 	// Conduct first round of signatures
-	for i, partyID := range T {
-		parties[partyID].Lambda = lagrangeCoeffs[i]
+	for _, partyID := range T {
+		parties[partyID].Lambda = lagrangeCoeffs[partyID]
 		parties[partyID].Seed = (*seeds)[partyID]
 		D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, mu, []byte(PRFKey), T)
 		utils.PrintPolynomial("Lagrange:", lagrangeCoeffs[partyID])
@@ -702,19 +702,18 @@ func ShamirSecretSharing(r *ring.Ring, s []*ring.Poly, t, k int) map[int][]*ring
 }
 
 // ComputeLagrangeCoefficients computes the Lagrange coefficients for interpolation based on the indices of available shares.
-// It returns a map where keys are indices, and values are pointers to ring.Poly objects containing the coefficients.
-func ComputeLagrangeCoefficients(r *ring.Ring, indices []int, modulus *big.Int) map[int]*ring.Poly {
-	k := len(indices)
+// It returns a map where keys are party IDs from the list T, and values are pointers to ring.Poly objects containing the coefficients.
+func ComputeLagrangeCoefficients(r *ring.Ring, T []int, modulus *big.Int) map[int]*ring.Poly {
 	lagrangeCoefficients := make(map[int]*ring.Poly)
 
-	for i := 0; i < k; i++ {
-		xi := big.NewInt(int64(indices[i] + 1)) // Convert index to x value (x values are 1-based in Shamir's scheme)
+	for i := 0; i < len(T); i++ {
+		xi := big.NewInt(int64(T[i] + 1)) // Convert party ID to x value (x values are 1-based in Shamir's scheme)
 		numerator := big.NewInt(1)
 		denominator := big.NewInt(1)
 
-		for j := 0; j < k; j++ {
+		for j := 0; j < len(T); j++ {
 			if i != j {
-				xj := big.NewInt(int64(indices[j] + 1))
+				xj := big.NewInt(int64(T[j] + 1))
 				// numerator *= (0 - xj)
 				numerator.Mul(numerator, new(big.Int).Neg(xj))
 				numerator.Mod(numerator, modulus)
@@ -733,7 +732,7 @@ func ComputeLagrangeCoefficients(r *ring.Ring, indices []int, modulus *big.Int) 
 		// Create a polynomial with this coefficient
 		lagrangePoly := r.NewPoly()
 		r.SetCoefficientsBigint([]*big.Int{coeff}, lagrangePoly)
-		lagrangeCoefficients[i] = &lagrangePoly
+		lagrangeCoefficients[T[i]] = &lagrangePoly
 	}
 
 	return lagrangeCoefficients
