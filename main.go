@@ -10,6 +10,7 @@ import (
 	"lattice-threshold-signature/utils"
 	"log"
 	"math/big"
+	"time"
 
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
@@ -23,8 +24,8 @@ const (
 	d = 10 // Length of joint noise vector
 
 	p         = 2
-	t         = 5  // Active threshold
-	k         = 20 // Total number of parties
+	t         = 1 // Active threshold
+	k         = 1 // Total number of parties
 	ell       = 1
 	beta      = 10
 	betaDelta = 10
@@ -68,23 +69,32 @@ func NewParty(id int, r *ring.Ring, sampler *ring.UniformSampler) *Party {
 }
 
 func main() {
+	// Prepare time measurement variables
+	var setupDuration, genDuration, signRound1Duration, signRound2Duration, finalizeDuration, verifyDuration time.Duration
+
 	randomKey := make([]byte, keySize)
 
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
-	prng, _ := sampling.NewKeyedPRNG(randomKey) // TODO: Consider using a truly random key for the PRNG seeding
+
+	prng, _ := sampling.NewKeyedPRNG(randomKey) // Consider using a truly random key for the PRNG seeding
 	uniformSampler := ring.NewUniformSampler(prng, r)
 	trustedDealerKey := randomKey
 
 	// SETUP
+	start := time.Now()
 	A := Setup(uniformSampler)
+	setupDuration = time.Since(start)
 	utils.PrintMatrix("A: ", A)
+
 	parties := make([]*Party, k)
 	for i := range parties {
 		parties[i] = NewParty(i, r, uniformSampler)
 	}
 
 	// GEN: Generate secret shares and seeds
+	start = time.Now()
 	skShares, seeds, b := Gen(r, A, uniformSampler, trustedDealerKey)
+	genDuration = time.Since(start)
 	utils.PrintVector("b: ", b)
 	for partyID := 0; partyID < k; partyID++ {
 		parties[partyID].SkShare = (*skShares)[partyID]
@@ -95,36 +105,50 @@ func main() {
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	PRFKey := "PRF Key"
-	T := []int{0, 1, 2, 3, 7} // Active parties
+	T := []int{0} // Active parties
+	start = time.Now()
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
 	D := make(map[int]*[][]*ring.Poly)
 	masks := make(map[int]*[]*ring.Poly)
-
-	// Conduct first round of signatures
 	for _, partyID := range T {
 		parties[partyID].Lambda = lagrangeCoeffs[partyID]
 		parties[partyID].Seed = (*seeds)[partyID]
 		D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, mu, []byte(PRFKey), T)
-		utils.PrintPolynomial("Lagrange:", lagrangeCoeffs[partyID])
-		utils.PrintVector("sk:", (*skShares)[partyID])
 	}
+	signRound1Duration = time.Since(start)
+	utils.PrintPolynomial("Lagrange:", lagrangeCoeffs[0])
+	utils.PrintVector("sk:", (*skShares)[0])
 
 	// SIGNATURE ROUND 2
+	start = time.Now()
 	z := make(map[int]*[]*ring.Poly)
 	for _, partyID := range T {
 		z[partyID] = parties[partyID].SignRound2(A, b, &D, &masks, sid, mu, T, []byte(PRFKey), seeds)
 	}
+	signRound2Duration = time.Since(start)
 
 	// SIGNATURE FINALIZE
+	start = time.Now()
 	finalParty := parties[0] // Example: Let the first party finalize the signature
 	c, sig, Delta := finalParty.SignFinalize(z, masks, A, b)
+	finalizeDuration = time.Since(start)
 	utils.PrintVector("Signature: ", *sig)
 	utils.PrintPolynomial("c: ", c)
 	utils.PrintVector("Delta: ", *Delta)
 
 	// Verify the signature
+	start = time.Now()
 	valid := Verify(r, sig, A, mu, b, finalParty.C, Delta, betaDelta)
+	verifyDuration = time.Since(start)
 	fmt.Printf("Signature Verification Result: %v\n", valid)
+
+	// Print all durations
+	fmt.Println("Setup duration:", setupDuration)
+	fmt.Println("Gen duration:", genDuration)
+	fmt.Println("Signature Round 1 duration:", signRound1Duration)
+	fmt.Println("Signature Round 2 duration:", signRound2Duration)
+	fmt.Println("Finalize duration:", finalizeDuration)
+	fmt.Println("Verify duration:", verifyDuration)
 }
 
 // Generate the public parameters
@@ -236,7 +260,7 @@ func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []b
 
 	// Sample the E_i matrix
 	gaussianParams = ring.DiscreteGaussian{}
-	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, false)
+	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, true)
 	E_i := make([][]*ring.Poly, m)
 	for i := 0; i < m; i++ {
 		E_i[i] = make([]*ring.Poly, d-1)
@@ -527,7 +551,7 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D *map
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 	gaussianParams := ring.DiscreteGaussian{}
-	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
+	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
 
 	u_j := make([]*ring.Poly, d-1)
 	for i := 0; i < d-1; i++ {
@@ -635,7 +659,7 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 	ternaryParams := ring.Ternary{H: kappa}
-	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, false)
+	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, true)
 	if err != nil {
 		log.Fatalf("Error creating ternary sampler: %v", err)
 	}

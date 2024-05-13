@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	m = 5
-	n = 5
+	m = 1
+	n = 1
 	// q       = uint64(61) // Modulo parameter
-	p       = 100
+	p       = 5
 	e_bound = 0.5 // Keep these as 0 for now!
 	sigma_e = 2   // Standard deviation for the error distribution
 	sigma_c = 2   // Standard deviation for the hash output distribution

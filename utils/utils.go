@@ -57,6 +57,25 @@ func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 	r.SetCoefficientsBigint(result, *p3)
 }
 
+// Sets p3 = p1 * p2 by first converting into NTT, using montgomery multiplication, and then converting out of NTT with INTT
+func MulNTT(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
+	// Transform p1 and p2 to the NTT domain
+	r.NTT(*p1, *p1)
+	r.NTT(*p2, *p2)
+
+	r.MForm(*p1, *p1)
+	r.MForm(*p2, *p2)
+
+	// Perform coefficient-wise multiplication in the NTT domain using Montgomery reduction
+	r.MulCoeffsMontgomery(*p1, *p2, *p3)
+
+	// Transform the result back to the standard domain using INTT
+	r.INTT(*p3, *p3)
+
+	r.IMForm(*p1, *p1)
+	r.IMForm(*p2, *p2)
+}
+
 // RoundPolyCoefficientsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
 // and updates the polynomial using the SetCoefficientsBigint method.
 func RoundCoeffsToNearestMultiple(r *ring.Ring, poly *ring.Poly, p uint64) {
