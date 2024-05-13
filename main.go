@@ -23,8 +23,8 @@ const (
 	d = 10 // Length of joint noise vector
 
 	p         = 2
-	t         = 3 // Active threshold
-	k         = 5 // Total number of parties
+	t         = 5  // Active threshold
+	k         = 20 // Total number of parties
 	ell       = 1
 	beta      = 10
 	betaDelta = 10
@@ -43,93 +43,87 @@ const (
 	keySize   = 30
 )
 
-// var q = uint64(61)
+// Party struct holds all state and methods for a party in the protocol
+type Party struct {
+	ID             int
+	Ring           *ring.Ring
+	UniformSampler *ring.UniformSampler
+	SkShare        []*ring.Poly
+	Seed           [][]byte
+	Mask           []*ring.Poly
+	R              *[][]*ring.Poly
+	C              *ring.Poly
+	H              []*ring.Poly
+	Lambda         *ring.Poly
+}
 
 var q = ring.Qi60[0]
+
+func NewParty(id int, r *ring.Ring, sampler *ring.UniformSampler) *Party {
+	return &Party{
+		ID:             id,
+		Ring:           r,
+		UniformSampler: sampler,
+	}
+}
 
 func main() {
 	randomKey := make([]byte, keySize)
 
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
-	prng, _ := sampling.NewKeyedPRNG(randomKey) // TODO: Change to random key for the PRNG seeding
+	prng, _ := sampling.NewKeyedPRNG(randomKey) // TODO: Consider using a truly random key for the PRNG seeding
 	uniformSampler := ring.NewUniformSampler(prng, r)
 	trustedDealerKey := randomKey
 
-	// Setup
+	// SETUP
 	A := Setup(uniformSampler)
-	// utils.PrintMatrix("A: ", A)
+	utils.PrintMatrix("A: ", A)
+	parties := make([]*Party, k)
+	for i := range parties {
+		parties[i] = NewParty(i, r, uniformSampler)
+	}
 
-	// Gen
-	skShares, seeds, b := Gen(r, A, uniformSampler, []byte(trustedDealerKey))
+	// GEN: Generate secret shares and seeds
+	skShares, seeds, b := Gen(r, A, uniformSampler, trustedDealerKey)
+	utils.PrintVector("b: ", b)
+	for partyID := 0; partyID < k; partyID++ {
+		parties[partyID].SkShare = (*skShares)[partyID]
+		parties[partyID].Seed = (*seeds)[partyID]
+	}
 
-	// utils.PrintVector("b: ", b)
-
-	// ROUND 1
+	// SIGNATURE ROUND 1
 	mu := "Hello, Threshold Signature!"
 	sid := 1
-	D := make(map[int]*[][]*ring.Poly)
-	concatR := make(map[int]*[][]*ring.Poly)
-	mask := make(map[int][]*ring.Poly)
 	PRFKey := "PRF Key"
-	T := []int{0, 1, 2}
+	T := []int{0, 1, 2, 3, 4} // Active parties
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
+	D := make(map[int]*[][]*ring.Poly)
+	masks := make(map[int]*[]*ring.Poly)
 
-	for partyInt := 0; partyInt < len(T); partyInt++ {
-		// utils.PrintPolynomial("Lagrange:", lagrangeCoeffs[partyInt])
-		// utils.PrintVector("sk:", (*skShares)[partyInt])
-		D[partyInt], mask[partyInt], concatR[partyInt] = SignRound1(r, uniformSampler, A, partyInt, sid, (*skShares)[partyInt], mu, []byte(PRFKey), (*seeds)[partyInt], T)
+	// Conduct first round of signatures
+	for i, partyID := range T {
+		parties[partyID].Lambda = lagrangeCoeffs[i]
+		parties[partyID].Seed = (*seeds)[partyID]
+		D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, mu, []byte(PRFKey), T)
+		utils.PrintPolynomial("Lagrange:", lagrangeCoeffs[partyID])
+		utils.PrintVector("sk:", (*skShares)[partyID])
 	}
 
-	// for key, matrix := range D {
-	// 	// utils.PrintMatrix("D_"+fmt.Sprint(key), matrix)
-	// }
-	// for key, vec := range mask {
-	// 	// utils.PrintVector("Mask_m_"+fmt.Sprint(key), vec)
-	// }
-	// for key, matrix := range concatR {
-	// 	// utils.PrintMatrix("concatR_"+fmt.Sprint(key), matrix)
-	// }
-
-	// ROUND 2
-	z := make(map[int][]*ring.Poly)
-	c := make(map[int]*ring.Poly)
-	h := make(map[int][]*ring.Poly)
-
-	for partyInt := 0; partyInt < len(T); partyInt++ {
-		z[partyInt], c[partyInt], h[partyInt] = SignRound2(r, partyInt, D, mask, A, b, (*skShares)[partyInt], sid, mu, T, []byte(PRFKey), seeds, concatR[partyInt], lagrangeCoeffs[partyInt])
+	// SIGNATURE ROUND 2
+	z := make(map[int]*[]*ring.Poly)
+	for _, partyID := range T {
+		z[partyID] = parties[partyID].SignRound2(A, b, &D, &masks, sid, mu, T, []byte(PRFKey), seeds)
 	}
 
-	// After computation in SignRound2
-	// for i, polys := range z {
-	// 	// utils.PrintVector("z_"+fmt.Sprint(i), polys)
-	// }
-
-	// for i, poly := range c {
-	// 	// utils.PrintPolynomial("c_"+fmt.Sprint(i), poly)
-	// }
-
-	// for i, poly := range h {
-	// 	// utils.PrintVector("h_"+fmt.Sprint(i), poly)
-	// }
-
-	// Aggregate the signature
-	// TODO: Update to take in only the local user's h value, this part is not broadcasted
-	Delta, sig := SignFinalize(r, z, mask, A, b, c[0], h[0])
-	// utils.PrintVector("Delta: ", Delta)
-	// utils.PrintVector("Signature: ", sig)
-
-	result := make([][]*ring.Poly, m)
-
-	utils.MatrixMatrixMul(r, A, concatR[0], &result)
-	// utils.PrintMatrix("This is what AR should be: ", &result)
-
-	results := r.NewPoly()
-	utils.MulPoly(r, (*(A))[0][0], (*(concatR[0]))[0][0], &results)
-	// utils.PrintPolynomial("What we're looking for: ", &results)
+	// SIGNATURE FINALIZE
+	finalParty := parties[0] // Example: Let the first party finalize the signature
+	c, sig, Delta := finalParty.SignFinalize(z, masks, A, b)
+	utils.PrintVector("Signature: ", *sig)
+	utils.PrintPolynomial("c: ", c)
+	utils.PrintVector("Delta: ", *Delta)
 
 	// Verify the signature
-	valid := Verify(r, sig, A, mu, b, c[0], Delta, betaDelta)
-
+	valid := Verify(r, sig, A, mu, b, finalParty.C, Delta, betaDelta)
 	fmt.Printf("Signature Verification Result: %v\n", valid)
 }
 
@@ -161,7 +155,7 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		s[i] = &element
 	}
 
-	// utils.PrintVector("s:", s)
+	utils.PrintVector("s:", s)
 
 	// Share the secret key vector
 	skShares := ShamirSecretSharing(r, s, t, k) // Shares the secret 's' across 'k' parties with threshold 't'
@@ -171,7 +165,7 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		element := gaussianSampler.ReadNew()
 		e[i] = &element
 	}
-	// utils.PrintVector("e: ", e)
+	utils.PrintVector("e: ", e)
 
 	// Compute b = As + e mod q
 	b := make([]*ring.Poly, m)
@@ -200,8 +194,11 @@ func generateRandomSeed() []byte {
 	return sd
 }
 
-// Sign function signs a message using the secret key and returns the signature
-func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Poly, partyInt int, sid int, skShare []*ring.Poly, mu string, PRFKey []byte, seeds [][]byte, T []int) (*[][]*ring.Poly, []*ring.Poly, *[][]*ring.Poly) {
+func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []byte, T []int) (*[][]*ring.Poly, *[]*ring.Poly) {
+	r := party.Ring
+	uniformSampler := party.UniformSampler
+	seeds := party.Seed
+
 	// Generate the row-wise mask from PRFs
 	mask := make([]*ring.Poly, n)
 	for _, j := range T {
@@ -217,7 +214,7 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	}
 
 	// Sample e*
-	skHash := userPRNGKey(skShare)
+	skHash := party.UserPRNGKey()
 	prng, _ := sampling.NewKeyedPRNG(skHash)
 	gaussianParams := ring.DiscreteGaussian{}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
@@ -248,7 +245,6 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 			E_i[i][j] = &element
 		}
 	}
-	// TODO: Make a util function for sampling a new matrix or vector
 
 	// Concatenate r_i_star with R_i, and e_i_star with E_i
 	concatenatedR := make([][]*ring.Poly, n)
@@ -257,21 +253,29 @@ func SignRound1(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.
 	for i := 0; i < n; i++ {
 		concatenatedR[i] = append([]*ring.Poly{r_star[i]}, R_i[i]...)
 	}
+	party.R = &concatenatedR
+
 	for i := 0; i < m; i++ {
 		concatenatedE[i] = append([]*ring.Poly{e_star[i]}, E_i[i]...)
 	}
-	// utils.PrintMatrix("concatE: ", &concatenatedE)
+	utils.PrintMatrix("concatE: ", &concatenatedE)
 
 	// Compute D_i = A(concatenatedR) + concatenatedE
 	D := make([][]*ring.Poly, m)
 	utils.MatrixMatrixMul(r, A, &concatenatedR, &D)
 	utils.MatrixAdd(r, &concatenatedE, &D, &D)
 
-	return &D, mask, &concatenatedR
+	// Broacasted values
+	return &D, &mask
 }
 
-// Sign function signs a message using the secret key and returns the signature
-func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, s_i []*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds *map[int][][]byte, concatR *[][]*ring.Poly, lambda *ring.Poly) ([]*ring.Poly, *ring.Poly, []*ring.Poly) {
+func (party *Party) SignRound2(A *[][]*ring.Poly, b []*ring.Poly, D *map[int]*[][]*ring.Poly, masks *map[int]*[]*ring.Poly, sid int, mu string, T []int, PRFKey []byte, seeds *map[int][][]byte) *[]*ring.Poly {
+	r := party.Ring
+	partyID := party.ID
+	concatR := party.R
+	s_i := party.SkShare
+	lambda := party.Lambda
+
 	// Create the noise vectors u
 	u := make(map[int][]*ring.Poly, d)
 	onePoly := r.NewMonomialXi(0)
@@ -280,24 +284,24 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 		oneSlice := []*ring.Poly{onePoly.CopyNew()}
 		u[j] = oneSlice
 		if d > 1 {
-			u_j := H_u(r, A, b, sid, j, DMap, mu, mMap)
+			u_j := H_u(r, A, b, sid, j, D, mu, masks)
 			u[j] = append(oneSlice, u_j...)
 		}
 	}
 
 	h := make([]*ring.Poly, m)
 
-	for j, D_j := range DMap {
+	for j, D_j := range *D {
 		D_j_u_j := make([]*ring.Poly, m)
-		// utils.PrintMatrix("D_j", D_j)
-		// utils.PrintVector("u[j]", u[j])
+		utils.PrintMatrix("D_j", D_j)
+		utils.PrintVector("u[j]", u[j])
 
 		utils.MatrixVectorMul(r, D_j, u[j], D_j_u_j)
 
-		// utils.PrintVector("D_j_u_j", D_j_u_j)
+		utils.PrintVector("D_j_u_j", D_j_u_j)
 
 		utils.VectorAdd(r, h, D_j_u_j, h)
-		// utils.PrintVector("h rn", h)
+		utils.PrintVector("h rn", h)
 
 	}
 
@@ -305,49 +309,56 @@ func SignRound2(r *ring.Ring, partyInt int, DMap map[int]*[][]*ring.Poly, mMap m
 	for _, poly := range h {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
+	party.H = h
 
 	// c = H_c
 	c := H_c(r, A, b, h, mu)
+	party.C = c
 
 	// Generate the column-wise mask from PRFs
 	mPrime := make([]*ring.Poly, n)
 	for _, j := range T {
-		mask_j := PRF(r, sid, (*seeds)[j][partyInt], PRFKey)
+		mask_j := PRF(r, sid, (*seeds)[j][partyID], PRFKey)
 		utils.VectorAdd(r, mPrime, mask_j, mPrime)
 	}
 
 	// Compute z_i as a vector of ring.Poly
 	z_i := make([]*ring.Poly, n)
-	utils.MatrixVectorMul(r, concatR, u[partyInt], z_i)
-	// utils.PrintVector("z after R*u", z_i)
+	utils.MatrixVectorMul(r, concatR, u[partyID], z_i)
+	utils.PrintVector("z after R*u", z_i)
 	utils.VectorAdd(r, z_i, mPrime, z_i)
-	// utils.PrintVector("z after R*u", z_i)
+	utils.PrintVector("z after R*u", z_i)
 	s_c_lambda := make([]*ring.Poly, n)
 	utils.VectorPolyMul(r, s_i, c, s_c_lambda)
 	utils.VectorPolyMul(r, s_c_lambda, lambda, s_c_lambda)
 	utils.VectorAdd(r, z_i, s_c_lambda, z_i)
 
-	return z_i, c, h
+	// Broadcast z_i
+	return &z_i
 }
 
-func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, mMap map[int][]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly, c *ring.Poly, h []*ring.Poly) ([]*ring.Poly, []*ring.Poly) {
+func (party *Party) SignFinalize(z map[int]*[]*ring.Poly, masks map[int]*[]*ring.Poly, A *[][]*ring.Poly, b []*ring.Poly) (*ring.Poly, *[]*ring.Poly, *[]*ring.Poly) {
+	r := party.Ring
+	c := party.C
+	h := party.H
+
 	// Initialize z_sum as an array of zero polynomials
 	z_sum := make([]*ring.Poly, n)
 
 	// Compute z_sum = Σ(z_j - m_j) mod q
 	for j, z_j := range z { // Looping through each z_j
-		mask_j := mMap[j]
+		mask_j := masks[j]
 		for i := 0; i < n; i++ {
 			if z_sum[i] == nil {
 				newPoly := r.NewPoly()
 				z_sum[i] = &newPoly
 			}
-			r.Sub(*z_j[i], *mask_j[i], *z_j[i]) // z_j[i] - m_j[i] mod q
-			r.Add(*z_sum[i], *z_j[i], *z_sum[i])
+			r.Sub(*(*z_j)[i], *(*mask_j)[i], *(*z_j)[i]) // z_j[i] - m_j[i] mod q
+			r.Add(*z_sum[i], *(*z_j)[i], *z_sum[i])
 		}
 	}
 
-	// utils.PrintVector("z_sum", z_sum)
+	utils.PrintVector("z_sum", z_sum)
 
 	// Compute Az using MatrixVectorMul
 	Az := make([]*ring.Poly, m)
@@ -361,25 +372,25 @@ func SignFinalize(r *ring.Ring, z map[int][]*ring.Poly, mMap map[int][]*ring.Pol
 	Az_bc := make([]*ring.Poly, m)
 	utils.VectorSub(r, Az, bc, Az_bc)
 
-	// utils.PrintVector("Az - bc: ", Az_bc)
+	utils.PrintVector("Az - bc: ", Az_bc)
 
 	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	// utils.PrintVector("Rounded Az_bc: ", Az_bc)
+	utils.PrintVector("Rounded Az_bc: ", Az_bc)
 
 	// Compute Δ = [h_p] - [Az - bc]_p
 	Delta := make([]*ring.Poly, m)
 	utils.VectorSub(r, h, Az_bc, Delta)
 
-	return Delta, z_sum
+	return party.C, &z_sum, &Delta
 }
 
-func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta []*ring.Poly, betaDelta uint64) bool {
+func Verify(r *ring.Ring, z *[]*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta *[]*ring.Poly, betaDelta uint64) bool {
 	// Compute Az using MatrixVectorMul
 	Az := make([]*ring.Poly, m)
-	utils.MatrixVectorMul(r, A, z, Az)
+	utils.MatrixVectorMul(r, A, *z, Az)
 
 	// Compute bc using VectorPolyMul
 	bc := make([]*ring.Poly, m)
@@ -389,18 +400,18 @@ func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*rin
 	Az_bc := make([]*ring.Poly, m)
 	utils.VectorSub(r, Az, bc, Az_bc)
 
-	// utils.PrintVector("Az - bc verification: ", Az_bc)
+	utils.PrintVector("Az - bc verification: ", Az_bc)
 
 	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	// utils.PrintVector("Rounded Az_bc: ", Az_bc)
+	utils.PrintVector("Rounded Az_bc: ", Az_bc)
 
 	Az_bc_Delta := make([]*ring.Poly, m)
-	utils.VectorAdd(r, Az_bc, Delta, Az_bc_Delta)
+	utils.VectorAdd(r, Az_bc, *Delta, Az_bc_Delta)
 
-	// utils.PrintVector("Rounded Az_bc_delta: ", Az_bc_Delta)
+	utils.PrintVector("Rounded Az_bc_delta: ", Az_bc_Delta)
 
 	// Verify that c equals H_c([Az - bc]_p + Delta, mu)
 	computedC := H_c(r, A, b, Az_bc_Delta, mu)
@@ -408,21 +419,17 @@ func Verify(r *ring.Ring, z []*ring.Poly, A *[][]*ring.Poly, mu string, b []*rin
 		return false
 	}
 
-	// utils.PrintPolynomial("Computed c: %v", computedC)
+	utils.PrintPolynomial("Computed c: %v", computedC)
 
 	// Verify that ||Delta||_inf <= betaDelta
-	if !checkInfinityNorm(r, Delta, betaDelta) {
-		return false
-	}
-
-	return true
+	return CheckInfinityNorm(r, Delta, betaDelta)
 }
 
-// checkInfinityNorm checks if the infinity norm of the vector of polynomial Delta is less than or equal to betaDelta
-func checkInfinityNorm(r *ring.Ring, Delta []*ring.Poly, betaDelta uint64) bool {
+// CheckInfinityNorm checks if the infinity norm of the vector of polynomial Delta is less than or equal to betaDelta
+func CheckInfinityNorm(r *ring.Ring, Delta *[]*ring.Poly, betaDelta uint64) bool {
 	maxValue := big.NewInt(0) // Temporary variable to store the maximum value found
 
-	for _, poly := range Delta {
+	for _, poly := range *Delta {
 		coeffsBigint := make([]*big.Int, poly.N())
 		r.PolyToBigint(*poly, 1, coeffsBigint)
 
@@ -437,40 +444,16 @@ func checkInfinityNorm(r *ring.Ring, Delta []*ring.Poly, betaDelta uint64) bool 
 	// Convert betaDelta to big.Int for comparison
 	betaDeltaBig := new(big.Int).SetUint64(betaDelta)
 
-	log.Printf("DELTA NORM: %v", maxValue)
+	log.Print("DELTA NORM:", maxValue)
 
 	// Check if the maximum absolute value is less than or equal to betaDelta
 	return maxValue.Cmp(betaDeltaBig) <= 0
 }
 
-func userPRNGKey(skShare []*ring.Poly) []byte {
-	hasher := sha3.NewShake128()
-	// Buffer to store all concatenated bytes
-	var buffer bytes.Buffer
-	// Handle slice sk
-	for _, poly := range skShare {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
-	}
-
-	hasher.Write(buffer.Bytes())
-
-	hashOutputLength := keySize
-	skHash := make([]byte, hashOutputLength)
-	_, err := hasher.Read(skHash)
-	if err != nil {
-		log.Fatalf("Error reading hash: %v\n", err)
-	}
-	return skHash
-}
-
 // HASHES & PRF
 
 // Hash parameters to a Gaussian distribution
-func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap map[int]*[][]*ring.Poly, mu string, mMap map[int][]*ring.Poly) []*ring.Poly {
+func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D *map[int]*[][]*ring.Poly, mu string, masks *map[int]*[]*ring.Poly) []*ring.Poly {
 	hasher := sha3.NewShake128()
 
 	// Buffer to store all concatenated bytes
@@ -503,8 +486,8 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 	binary.Write(&buffer, binary.BigEndian, j)
 
 	// Handle map of matrices D
-	for _, D := range DMap {
-		for _, row := range *D {
+	for _, D_h := range *D {
+		for _, row := range *D_h {
 			for _, poly := range row {
 				data, err := poly.MarshalBinary()
 				if err != nil {
@@ -519,8 +502,8 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 	buffer.WriteString(mu)
 
 	// Handle map of slices m
-	for _, m := range mMap {
-		for _, poly := range m {
+	for _, mask := range *masks {
+		for _, poly := range *mask {
 			data, err := poly.MarshalBinary()
 			if err != nil {
 				log.Fatalf("Error marshalling poly: %v\n", err)
@@ -552,7 +535,7 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, DMap m
 		u_j[i] = &element
 	}
 
-	// utils.PrintVector("u_j", u_j)
+	utils.PrintVector("u_j", u_j)
 
 	return u_j
 }
@@ -756,24 +739,28 @@ func ComputeLagrangeCoefficients(r *ring.Ring, indices []int, modulus *big.Int) 
 	return lagrangeCoefficients
 }
 
-// func ReconstructSecret(r *ring.Ring, skShares *map[int][]*ring.Poly, lagrangeCoeffs map[int]*ring.Poly) []*ring.Poly {
-// 	size := len((*skShares)[0]) // Assuming all shares have the same number of polynomials
-// 	reconstructed := make([]*ring.Poly, size)
+func (party *Party) UserPRNGKey() []byte {
+	skShare := party.SkShare
 
-// 	// Initialize reconstructed array with zero polynomials
-// 	for i := range reconstructed {
-// 		newPoly := r.NewPoly()
-// 		reconstructed[i] = &newPoly
-// 	}
+	hasher := sha3.NewShake128()
+	// Buffer to store all concatenated bytes
+	var buffer bytes.Buffer
+	// Handle slice sk
+	for _, poly := range skShare {
+		data, err := poly.MarshalBinary()
+		if err != nil {
+			log.Fatalf("Error marshalling poly: %v\n", err)
+		}
+		buffer.Write(data)
+	}
 
-// 	// Sum up the shares weighted by their Lagrange coefficients
-// 	for party, shares := range *skShares {
-// 		for i, share := range shares {
-// 			temp := r.NewPoly()
-// 			utils.MulPoly(r, share, lagrangeCoeffs[party], &temp) // Multiply share with Lagrange coefficient
-// 			r.Add(*reconstructed[i], temp, *reconstructed[i])     // Add to the reconstructed secret
-// 		}
-// 	}
+	hasher.Write(buffer.Bytes())
 
-// 	return reconstructed
-// }
+	hashOutputLength := keySize
+	skHash := make([]byte, hashOutputLength)
+	_, err := hasher.Read(skHash)
+	if err != nil {
+		log.Fatalf("Error reading hash: %v\n", err)
+	}
+	return skHash
+}
