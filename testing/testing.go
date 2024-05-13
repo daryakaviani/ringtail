@@ -51,6 +51,9 @@ func TestingNTT(r *ring.Ring) {
 	utils.MulNTT(r, &p1, &p2, &p3)
 	utils.MulPoly(r, &p1, &p2, &p4)
 
+	utils.PrintPolynomial("p3:", &p3)
+	utils.PrintPolynomial("p4:", &p4)
+
 	// Check if the results are equal
 	resultsMatch := true
 	for i := range p3.Coeffs {
@@ -188,8 +191,6 @@ func TestConvolution(r *ring.Ring) {
 	r.MForm(pa, pa)
 	r.MForm(pb, pb)
 
-	subrings := r.SubRings
-	log.Println("SUBGRINGS", subrings[0].MRedConstant, subrings[0].Modulus, subrings[0].Factors)
 	r.MulCoeffsMontgomery(pa, pb, pc)
 	r.IMForm(pc, pc)
 	r.INTT(pc, pc)

@@ -19,26 +19,26 @@ import (
 
 // PARAMETERS
 const (
-	m = 10
-	n = 10
+	m = 11
+	n = 9
 	d = 10 // Length of joint noise vector
 
 	p         = 2
-	t         = 4  // Active threshold
-	k         = 10 // Total number of parties
+	t         = 2 // Active threshold
+	k         = 3 // Total number of parties
 	ell       = 1
 	beta      = 10
-	betaDelta = 10
-	kappa     = 100
-	logN      = 3
-	bound_e   = 0
-	sigma_e   = 0
-	bound_c   = 0
-	sigma_c   = 0
-	boundE    = 0
-	sigmaE    = 0
-	boundStar = 0
-	sigmaStar = 0
+	betaDelta = 100000
+	kappa     = 23
+	logN      = 8
+	bound_e   = 1000
+	sigma_e   = 32
+	bound_c   = 5000
+	sigma_c   = 24296004000
+	boundE    = 1000
+	sigmaE    = 32
+	boundStar = 1000
+	sigmaStar = 32
 	boundU    = 0
 	sigmaU    = 0
 	keySize   = 30
@@ -105,7 +105,7 @@ func main() {
 	mu := "Hello, Threshold Signature!"
 	sid := 1
 	PRFKey := "PRF Key"
-	T := []int{0, 1, 2, 3} // Active parties
+	T := []int{0, 1} // Active parties
 	start = time.Now()
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
 	D := make(map[int]*[][]*ring.Poly)
@@ -170,7 +170,7 @@ func Setup(uniformSampler *ring.UniformSampler) *[][]*ring.Poly {
 
 func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, trustedDealerKey []byte) (*map[int][]*ring.Poly, *map[int][][]byte, []*ring.Poly) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
-	gaussianParams := ring.DiscreteGaussian{}
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigma_e, Bound: bound_e}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	s := make([]*ring.Poly, n)
@@ -201,7 +201,7 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 	for i := 0; i < k; i++ {
 		seeds[i] = make([][]byte, k)
 		for j := 0; j < k; j++ {
-			seeds[i][j] = generateRandomSeed()
+			seeds[i][j] = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9} // TODO: change to random seed again
 		}
 	}
 
@@ -240,7 +240,7 @@ func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []b
 	// Sample e*
 	skHash := party.PRNGKey()
 	prng, _ := sampling.NewKeyedPRNG(skHash)
-	gaussianParams := ring.DiscreteGaussian{}
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaStar, Bound: boundStar}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 	e_star := make([]*ring.Poly, m)
 	for i := 0; i < m; i++ {
@@ -259,8 +259,8 @@ func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []b
 	}
 
 	// Sample the E_i matrix
-	gaussianParams = ring.DiscreteGaussian{}
-	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	gaussianParams = ring.DiscreteGaussian{Sigma: sigmaE, Bound: boundE}
+	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, false)
 	E_i := make([][]*ring.Poly, m)
 	for i := 0; i < m; i++ {
 		E_i[i] = make([]*ring.Poly, d-1)
@@ -473,7 +473,7 @@ func CheckInfinityNorm(r *ring.Ring, Delta *[]*ring.Poly, betaDelta uint64) bool
 	log.Print("DELTA NORM:", maxValue)
 
 	// Check if the maximum absolute value is less than or equal to betaDelta
-	return maxValue.Cmp(betaDeltaBig) <= 0
+	return new(big.Int).Mod(maxValue, new(big.Int).SetUint64(q)).Cmp(betaDeltaBig) <= 0
 }
 
 // HASHES & PRF
@@ -552,8 +552,8 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D *map
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	gaussianParams := ring.DiscreteGaussian{}
-	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, true)
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaU, Bound: boundU}
+	hashGaussiamSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	u_j := make([]*ring.Poly, d-1)
 	for i := 0; i < d-1; i++ {
@@ -661,7 +661,7 @@ func H_c(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu str
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
 	ternaryParams := ring.Ternary{H: kappa}
-	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, true)
+	ternarySampler, err := ring.NewTernarySampler(prng, r, ternaryParams, false)
 	if err != nil {
 		log.Fatalf("Error creating ternary sampler: %v", err)
 	}
