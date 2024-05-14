@@ -12,7 +12,7 @@ const logN = 8
 // TODO: Make this general to other rings which are larger
 // polyMultInCyclotomicRing multiplies two polynomials within the cyclotomic ring x^8 + 1 and returns the result.
 // Each polynomial is represented as a slice of big.Int pointers, sorted from least to most significant.
-func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
+func MulPolyNaive(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 	degree := 1 << logN // Since we are in a ring modulo x^8 + 1
 
 	q := r.Modulus()
@@ -58,7 +58,7 @@ func MulPoly(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 }
 
 // Sets p3 = p1 * p2 by first converting into NTT, multiplying coefficient-wise, and then converting out of NTT with INTT
-func MulNTT(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
+func MulPolyNTT(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 	// Transform p1 and p2 to the NTT domain
 	r.NTT(*p1, *p1)
 	r.NTT(*p2, *p2)
@@ -337,6 +337,67 @@ func VectorSub(r *ring.Ring, v1, v2, result []*ring.Poly) {
 		}
 
 		r.Sub(*v1[i], *v2[i], *result[i])
+	}
+}
+
+// NAIVE MULTIPLICATIONS
+
+// MatrixVectorMul performs matrix-vector multiplication.
+// It takes a matrix of ring.Poly pointers, a vector of ring.Poly pointers, and outputs the result in a given result vector.
+func MatrixVectorMulNaive(r *ring.Ring, M *[][]*ring.Poly, vec []*ring.Poly, result []*ring.Poly) {
+	for i := range *M {
+		result[i] = r.NewPoly().CopyNew()
+		for j := range (*M)[i] {
+			temp := r.NewPoly()
+			MulPolyNaive(r, (*M)[i][j], vec[j], &temp)
+			r.Add(*result[i], temp, *result[i]) // Accumulate the result
+		}
+	}
+}
+
+// MatrixMatrixMul performs matrix-matrix multiplication.
+// It takes two matrices of ring.Poly pointers, M1 of dimensions m x p and M2 of dimensions p x n,
+// and outputs the result in a given result matrix of dimensions m x n.
+func MatrixMatrixMulNaive(r *ring.Ring, M1, M2 *[][]*ring.Poly, result *[][]*ring.Poly) {
+	if M1 == nil || M2 == nil || len(*M1) == 0 || len(*M2) == 0 || len((*M1)[0]) != len(*M2) {
+		log.Fatalf("Matrix dimensions are not compatible for multiplication.")
+		return
+	}
+
+	m := len(*M1)
+	p := len((*M1)[0]) // Assuming all rows in M1 are of the same length
+	n := len((*M2)[0]) // Assuming all rows in M2 are of the same length
+
+	// Initialize the result matrix with zeros
+	for i := 0; i < m; i++ {
+		(*result)[i] = make([]*ring.Poly, n)
+		for j := 0; j < n; j++ {
+			newPoly := r.NewPoly()
+			(*result)[i][j] = &newPoly
+		}
+	}
+
+	// Perform matrix multiplication
+	for i := 0; i < m; i++ {
+		for j := 0; j < n; j++ {
+			for k := 0; k < p; k++ {
+				temp := r.NewPoly()
+				MulPolyNaive(r, (*M1)[i][k], (*M2)[k][j], &temp)
+				r.Add(*(*result)[i][j], temp, *(*result)[i][j])
+			}
+		}
+	}
+}
+
+// VectorPolyMulNaive performs element-wise multiplication of a vector by a polynomial.
+// It takes a vector of ring.Poly pointers, a single ring.Poly pointer, and outputs the result in a given result vector.
+func VectorPolyMulNaive(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ring.Poly) {
+	for i := range vec {
+		if result[i] == nil {
+			newPoly := r.NewPoly()
+			result[i] = &newPoly
+		}
+		MulPolyNaive(r, vec[i], poly, result[i]) // Multiply each vector element by the polynomial
 	}
 }
 
