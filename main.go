@@ -384,7 +384,7 @@ func Verify(r *ring.Ring, z *[]*ring.Poly, A *[][]*ring.Poly, mu string, b []*ri
 	bNTT := utils.ConvertVectorToNTT(r, b)
 	cNTT := utils.ConvertPolyToNTT(r, c)
 
-	// Compute Az using MatrixVectorMulNTT
+	// Compute Az using MatrixVectorMul
 	Az := make([]*ring.Poly, m)
 	utils.MatrixVectorMul(r, ANTT, *zNTT, Az)
 
