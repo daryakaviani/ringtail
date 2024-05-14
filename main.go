@@ -164,12 +164,12 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 	// Compute b = As + e mod q
 	b := make([]*ring.Poly, m)
 
-	utils.ConvertMatrixToNTT(r, A)
-	utils.ConvertVectorToNTT(r, s)
-	utils.ConvertVectorToNTT(r, e)
+	ANTT := utils.ConvertMatrixToNTT(r, A)
+	sNTT := utils.ConvertVectorToNTT(r, s)
+	eNTT := utils.ConvertVectorToNTT(r, e)
 
-	utils.MatrixVectorMul(r, A, s, b)
-	utils.VectorAdd(r, b, e, b)
+	utils.MatrixVectorMul(r, ANTT, *sNTT, b)
+	utils.VectorAdd(r, b, *eNTT, b)
 
 	// Generate random seeds for all possible i, j
 	seeds := make(map[int][][]byte)
@@ -180,9 +180,6 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 		}
 	}
 
-	utils.ConvertMatrixFromNTT(r, A)
-	utils.ConvertVectorFromNTT(r, s)
-	utils.ConvertVectorFromNTT(r, e)
 	utils.ConvertVectorFromNTT(r, b)
 
 	return &skShares, &seeds, b
@@ -244,17 +241,13 @@ func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []b
 	// Compute D_i = A(concatenatedR) + concatenatedE
 	D := make([][]*ring.Poly, m)
 
-	utils.ConvertMatrixToNTT(r, A)
-	utils.ConvertMatrixToNTT(r, &concatenatedR)
-	utils.ConvertMatrixToNTT(r, &concatenatedE)
+	ANTT := utils.ConvertMatrixToNTT(r, A)
+	concatRNTT := utils.ConvertMatrixToNTT(r, &concatenatedR)
 
-	utils.MatrixMatrixMul(r, A, &concatenatedR, &D)
-	utils.MatrixAdd(r, &concatenatedE, &D, &D)
+	utils.MatrixMatrixMul(r, ANTT, concatRNTT, &D)
 
-	utils.ConvertMatrixFromNTT(r, A)
-	utils.ConvertMatrixFromNTT(r, &concatenatedR)
 	utils.ConvertMatrixFromNTT(r, &D)
-	utils.ConvertMatrixFromNTT(r, &concatenatedE)
+	utils.MatrixAdd(r, &concatenatedE, &D, &D)
 
 	// Broacasted values
 	return &D, &mask
@@ -282,21 +275,19 @@ func (party *Party) SignRound2(A *[][]*ring.Poly, b []*ring.Poly, D *map[int]*[]
 
 	h := make([]*ring.Poly, m)
 
-	utils.ConvertVectorToNTT(r, s_i)
-	utils.ConvertMatrixToNTT(r, concatR)
-	utils.ConvertPolyToNTT(r, lambda)
+	s_iNTT := utils.ConvertVectorToNTT(r, s_i)
+	concatRNTT := utils.ConvertMatrixToNTT(r, concatR)
+	lambdaNTT := utils.ConvertPolyToNTT(r, lambda)
 
 	for j, D_j := range *D {
 		D_j_u_j := make([]*ring.Poly, m)
 
-		utils.ConvertMatrixToNTT(r, D_j)
-		utils.ConvertVectorToNTT(r, u[j])
+		D_jNTT := utils.ConvertMatrixToNTT(r, D_j)
+		u_jNTT := utils.ConvertVectorToNTT(r, u[j])
+		u[j] = *u_jNTT
 
-		utils.MatrixVectorMul(r, D_j, u[j], D_j_u_j)
+		utils.MatrixVectorMul(r, D_jNTT, *u_jNTT, D_j_u_j)
 		utils.VectorAdd(r, h, D_j_u_j, h)
-
-		utils.ConvertMatrixFromNTT(r, D_j)
-		utils.ConvertVectorFromNTT(r, D_j_u_j)
 	}
 
 	utils.ConvertVectorFromNTT(r, h)
@@ -309,7 +300,20 @@ func (party *Party) SignRound2(A *[][]*ring.Poly, b []*ring.Poly, D *map[int]*[]
 	// c = H_c
 	c := H_c(r, A, b, h, mu)
 	party.C = c
-	utils.ConvertPolyToNTT(r, c)
+	cNTT := utils.ConvertPolyToNTT(r, c)
+
+	// Compute z_i as a vector of ring.Poly
+	z_i := make([]*ring.Poly, n)
+	utils.MatrixVectorMul(r, concatRNTT, u[partyID], z_i)
+	s_c_lambda := make([]*ring.Poly, n)
+	utils.VectorPolyMul(r, *s_iNTT, cNTT, s_c_lambda)
+	utils.VectorPolyMul(r, s_c_lambda, lambdaNTT, s_c_lambda)
+	utils.VectorAdd(r, z_i, s_c_lambda, z_i)
+
+	utils.ConvertVectorFromNTT(r, z_i)
+	for _, u_j := range u {
+		utils.ConvertVectorFromNTT(r, u_j)
+	}
 
 	// Generate the column-wise mask from PRFs
 	mPrime := make([]*ring.Poly, n)
@@ -317,26 +321,7 @@ func (party *Party) SignRound2(A *[][]*ring.Poly, b []*ring.Poly, D *map[int]*[]
 		mask_j := PRF(r, sid, (*seeds)[j][partyID], PRFKey)
 		utils.VectorAdd(r, mPrime, mask_j, mPrime)
 	}
-	utils.ConvertVectorToNTT(r, mPrime)
-
-	// Compute z_i as a vector of ring.Poly
-	z_i := make([]*ring.Poly, n)
-	utils.MatrixVectorMul(r, concatR, u[partyID], z_i)
 	utils.VectorAdd(r, z_i, mPrime, z_i)
-	s_c_lambda := make([]*ring.Poly, n)
-	utils.VectorPolyMul(r, s_i, c, s_c_lambda)
-	utils.VectorPolyMul(r, s_c_lambda, lambda, s_c_lambda)
-	utils.VectorAdd(r, z_i, s_c_lambda, z_i)
-
-	utils.ConvertPolyFromNTT(r, c)
-	utils.ConvertPolyFromNTT(r, lambda)
-	utils.ConvertVectorFromNTT(r, s_i)
-	utils.ConvertMatrixFromNTT(r, concatR)
-	utils.ConvertVectorFromNTT(r, z_i)
-	utils.ConvertVectorFromNTT(r, mPrime)
-	for _, u_j := range u {
-		utils.ConvertVectorFromNTT(r, u_j)
-	}
 
 	// Broadcast z_i
 	return &z_i
@@ -365,16 +350,16 @@ func (party *Party) SignFinalize(z map[int]*[]*ring.Poly, masks map[int]*[]*ring
 	// Compute Az using MatrixVectorMulNTT
 	Az := make([]*ring.Poly, m)
 
-	utils.ConvertMatrixToNTT(r, A)
-	utils.ConvertVectorToNTT(r, z_sum)
-	utils.ConvertVectorToNTT(r, b)
-	utils.ConvertPolyToNTT(r, c)
+	ANTT := utils.ConvertMatrixToNTT(r, A)
+	z_sumNTT := utils.ConvertVectorToNTT(r, z_sum)
+	bNTT := utils.ConvertVectorToNTT(r, b)
+	cNTT := utils.ConvertPolyToNTT(r, c)
 
-	utils.MatrixVectorMul(r, A, z_sum, Az)
+	utils.MatrixVectorMul(r, ANTT, *z_sumNTT, Az)
 
 	// Compute bc using VectorPolyMulNTT
 	bc := make([]*ring.Poly, m)
-	utils.VectorPolyMul(r, b, c, bc)
+	utils.VectorPolyMul(r, *bNTT, cNTT, bc)
 
 	// Subtract bc from Az to get Az_bc
 	Az_bc := make([]*ring.Poly, m)
@@ -385,10 +370,6 @@ func (party *Party) SignFinalize(z map[int]*[]*ring.Poly, masks map[int]*[]*ring
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	utils.ConvertVectorFromNTT(r, z_sum)
-	utils.ConvertMatrixFromNTT(r, A)
-	utils.ConvertPolyFromNTT(r, c)
-	utils.ConvertVectorFromNTT(r, b)
 
 	// Compute Δ = [h_p] - [Az - bc]_p
 	Delta := make([]*ring.Poly, m)
@@ -398,29 +379,24 @@ func (party *Party) SignFinalize(z map[int]*[]*ring.Poly, masks map[int]*[]*ring
 }
 
 func Verify(r *ring.Ring, z *[]*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta *[]*ring.Poly, betaDelta uint64) bool {
-	utils.ConvertVectorToNTT(r, *z)
-	utils.ConvertMatrixToNTT(r, A)
-	utils.ConvertVectorToNTT(r, b)
-	utils.ConvertPolyToNTT(r, c)
+	zNTT := utils.ConvertVectorToNTT(r, *z)
+	ANTT := utils.ConvertMatrixToNTT(r, A)
+	bNTT := utils.ConvertVectorToNTT(r, b)
+	cNTT := utils.ConvertPolyToNTT(r, c)
 
 	// Compute Az using MatrixVectorMulNTT
 	Az := make([]*ring.Poly, m)
-	utils.MatrixVectorMul(r, A, *z, Az)
+	utils.MatrixVectorMul(r, ANTT, *zNTT, Az)
 
 	// Compute bc using VectorPolyMulNTT
 	bc := make([]*ring.Poly, m)
-	utils.VectorPolyMul(r, b, c, bc)
-
-	utils.ConvertVectorFromNTT(r, *z)
-	utils.ConvertMatrixFromNTT(r, A)
-	utils.ConvertVectorFromNTT(r, b)
-	utils.ConvertPolyFromNTT(r, c)
-	utils.ConvertVectorFromNTT(r, Az)
-	utils.ConvertVectorFromNTT(r, bc)
+	utils.VectorPolyMul(r, *bNTT, cNTT, bc)
 
 	// Subtract bc from Az to get Az_bc
 	Az_bc := make([]*ring.Poly, m)
 	utils.VectorSub(r, Az, bc, Az_bc)
+
+	utils.ConvertVectorFromNTT(r, Az_bc)
 
 	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
