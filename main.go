@@ -35,8 +35,8 @@ const (
 	sigma_e   = 32
 	boundE    = 1000
 	sigmaE    = 32
-	boundStar = 24296004000 * 2
-	sigmaStar = 24296004000
+	boundStar = 1000
+	sigmaStar = 32
 	boundU    = 0
 	sigmaU    = 0
 	keySize   = 30
