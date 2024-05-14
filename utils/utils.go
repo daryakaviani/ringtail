@@ -36,7 +36,7 @@ func MulPolyNaive(r *ring.Ring, p1 *ring.Poly, p2 *ring.Poly, p3 *ring.Poly) {
 				temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
 				result[i+j].Add(result[i+j], temp)
 			} else {
-				if (((i+j)-((i+j)%degree))/8)%2 == 0 {
+				if (((i+j)-((i+j)%degree))/(2<<logN))%2 == 0 {
 					// Wrap around due to cyclotomic ring, i+j >= degree
 					temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
 					result[(i+j)%degree].Add(result[(i+j)%degree], temp)
