@@ -82,7 +82,6 @@ func main() {
 	start := time.Now()
 	A := Setup(uniformSampler)
 	setupDuration = time.Since(start)
-	// utils.printMatrix("A: ", A)
 
 	parties := make([]*Party, k)
 	for i := range parties {
@@ -93,7 +92,7 @@ func main() {
 	start = time.Now()
 	skShares, seeds, b := Gen(r, A, uniformSampler, trustedDealerKey)
 	genDuration = time.Since(start)
-	// utils.printVector("b: ", b)
+
 	for partyID := 0; partyID < k; partyID++ {
 		parties[partyID].SkShare = (*skShares)[partyID]
 		parties[partyID].Seed = (*seeds)[partyID]
@@ -114,8 +113,6 @@ func main() {
 		D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, mu, []byte(PRFKey), T)
 	}
 	signRound1Duration = time.Since(start)
-	// utils.printPolynomial("Lagrange:", lagrangeCoeffs[0])
-	// utils.printVector("sk:", (*skShares)[0])
 
 	// SIGNATURE ROUND 2
 	start = time.Now()
@@ -130,9 +127,6 @@ func main() {
 	finalParty := parties[0] // Example: Let the first party finalize the signature
 	_, sig, Delta := finalParty.SignFinalize(z, masks, A, b)
 	finalizeDuration = time.Since(start)
-	// utils.printVector("Signature: ", *sig)
-	// utils.printPolynomial("c: ", c)
-	// utils.printVector("Delta: ", *Delta)
 
 	// Verify the signature
 	start = time.Now()
@@ -161,16 +155,19 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	s := utils.SamplePolyVector(n, uniformSampler)
-	// utils.printVector("s:", s)
 
 	// Share the secret key vector
 	skShares := ShamirSecretSharing(r, s, t, k) // Shares the secret 's' across 'k' parties with threshold 't'
 
 	e := utils.SamplePolyVector(m, gaussianSampler)
-	// utils.printVector("e: ", e)
 
 	// Compute b = As + e mod q
 	b := make([]*ring.Poly, m)
+
+	utils.ConvertMatrixToNTT(r, A)
+	utils.ConvertVectorToNTT(r, s)
+	utils.ConvertVectorToNTT(r, e)
+
 	utils.MatrixVectorMul(r, A, s, b)
 	utils.VectorAdd(r, b, e, b)
 
@@ -182,6 +179,11 @@ func Gen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler, t
 			seeds[i][j] = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9} // TODO: change to random seed again
 		}
 	}
+
+	utils.ConvertMatrixFromNTT(r, A)
+	utils.ConvertVectorFromNTT(r, s)
+	utils.ConvertVectorFromNTT(r, e)
+	utils.ConvertVectorFromNTT(r, b)
 
 	return &skShares, &seeds, b
 }
@@ -238,12 +240,21 @@ func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []b
 	for i := 0; i < m; i++ {
 		concatenatedE[i] = append([]*ring.Poly{e_star[i]}, E_i[i]...)
 	}
-	// utils.printMatrix("concatE: ", &concatenatedE)
 
 	// Compute D_i = A(concatenatedR) + concatenatedE
 	D := make([][]*ring.Poly, m)
+
+	utils.ConvertMatrixToNTT(r, A)
+	utils.ConvertMatrixToNTT(r, &concatenatedR)
+	utils.ConvertMatrixToNTT(r, &concatenatedE)
+
 	utils.MatrixMatrixMul(r, A, &concatenatedR, &D)
 	utils.MatrixAdd(r, &concatenatedE, &D, &D)
+
+	utils.ConvertMatrixFromNTT(r, A)
+	utils.ConvertMatrixFromNTT(r, &concatenatedR)
+	utils.ConvertMatrixFromNTT(r, &D)
+	utils.ConvertMatrixFromNTT(r, &concatenatedE)
 
 	// Broacasted values
 	return &D, &mask
@@ -271,29 +282,34 @@ func (party *Party) SignRound2(A *[][]*ring.Poly, b []*ring.Poly, D *map[int]*[]
 
 	h := make([]*ring.Poly, m)
 
+	utils.ConvertVectorToNTT(r, s_i)
+	utils.ConvertMatrixToNTT(r, concatR)
+	utils.ConvertPolyToNTT(r, lambda)
+
 	for j, D_j := range *D {
 		D_j_u_j := make([]*ring.Poly, m)
-		// utils.printMatrix("D_j", D_j)
-		// utils.printVector("u[j]", u[j])
+
+		utils.ConvertMatrixToNTT(r, D_j)
+		utils.ConvertVectorToNTT(r, u[j])
 
 		utils.MatrixVectorMul(r, D_j, u[j], D_j_u_j)
-
-		// utils.printVector("D_j_u_j", D_j_u_j)
-
 		utils.VectorAdd(r, h, D_j_u_j, h)
-		// utils.printVector("h rn", h)
 
+		utils.ConvertMatrixFromNTT(r, D_j)
+		utils.ConvertVectorFromNTT(r, D_j_u_j)
 	}
+
+	utils.ConvertVectorFromNTT(r, h)
 
 	// Round h to the nearest multiple of p
 	for _, poly := range h {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 	party.H = h
-
 	// c = H_c
 	c := H_c(r, A, b, h, mu)
 	party.C = c
+	utils.ConvertPolyToNTT(r, c)
 
 	// Generate the column-wise mask from PRFs
 	mPrime := make([]*ring.Poly, n)
@@ -301,17 +317,26 @@ func (party *Party) SignRound2(A *[][]*ring.Poly, b []*ring.Poly, D *map[int]*[]
 		mask_j := PRF(r, sid, (*seeds)[j][partyID], PRFKey)
 		utils.VectorAdd(r, mPrime, mask_j, mPrime)
 	}
+	utils.ConvertVectorToNTT(r, mPrime)
 
 	// Compute z_i as a vector of ring.Poly
 	z_i := make([]*ring.Poly, n)
 	utils.MatrixVectorMul(r, concatR, u[partyID], z_i)
-	// utils.printVector("z after R*u", z_i)
 	utils.VectorAdd(r, z_i, mPrime, z_i)
-	// utils.printVector("z after R*u", z_i)
 	s_c_lambda := make([]*ring.Poly, n)
 	utils.VectorPolyMul(r, s_i, c, s_c_lambda)
 	utils.VectorPolyMul(r, s_c_lambda, lambda, s_c_lambda)
 	utils.VectorAdd(r, z_i, s_c_lambda, z_i)
+
+	utils.ConvertPolyFromNTT(r, c)
+	utils.ConvertPolyFromNTT(r, lambda)
+	utils.ConvertVectorFromNTT(r, s_i)
+	utils.ConvertMatrixFromNTT(r, concatR)
+	utils.ConvertVectorFromNTT(r, z_i)
+	utils.ConvertVectorFromNTT(r, mPrime)
+	for _, u_j := range u {
+		utils.ConvertVectorFromNTT(r, u_j)
+	}
 
 	// Broadcast z_i
 	return &z_i
@@ -330,21 +355,24 @@ func (party *Party) SignFinalize(z map[int]*[]*ring.Poly, masks map[int]*[]*ring
 		mask_j := masks[j]
 		for i := 0; i < n; i++ {
 			if z_sum[i] == nil {
-				newPoly := r.NewPoly()
-				z_sum[i] = &newPoly
+				z_sum[i] = r.NewPoly().CopyNew()
 			}
 			r.Sub(*(*z_j)[i], *(*mask_j)[i], *(*z_j)[i]) // z_j[i] - m_j[i] mod q
 			r.Add(*z_sum[i], *(*z_j)[i], *z_sum[i])
 		}
 	}
 
-	// utils.printVector("z_sum", z_sum)
-
-	// Compute Az using MatrixVectorMul
+	// Compute Az using MatrixVectorMulNTT
 	Az := make([]*ring.Poly, m)
+
+	utils.ConvertMatrixToNTT(r, A)
+	utils.ConvertVectorToNTT(r, z_sum)
+	utils.ConvertVectorToNTT(r, b)
+	utils.ConvertPolyToNTT(r, c)
+
 	utils.MatrixVectorMul(r, A, z_sum, Az)
 
-	// Compute bc using VectorPolyMul
+	// Compute bc using VectorPolyMulNTT
 	bc := make([]*ring.Poly, m)
 	utils.VectorPolyMul(r, b, c, bc)
 
@@ -352,13 +380,15 @@ func (party *Party) SignFinalize(z map[int]*[]*ring.Poly, masks map[int]*[]*ring
 	Az_bc := make([]*ring.Poly, m)
 	utils.VectorSub(r, Az, bc, Az_bc)
 
-	// utils.printVector("Az - bc: ", Az_bc)
-
+	utils.ConvertVectorFromNTT(r, Az_bc)
 	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	// utils.printVector("Rounded Az_bc: ", Az_bc)
+	utils.ConvertVectorFromNTT(r, z_sum)
+	utils.ConvertMatrixFromNTT(r, A)
+	utils.ConvertPolyFromNTT(r, c)
+	utils.ConvertVectorFromNTT(r, b)
 
 	// Compute Δ = [h_p] - [Az - bc]_p
 	Delta := make([]*ring.Poly, m)
@@ -368,38 +398,43 @@ func (party *Party) SignFinalize(z map[int]*[]*ring.Poly, masks map[int]*[]*ring
 }
 
 func Verify(r *ring.Ring, z *[]*ring.Poly, A *[][]*ring.Poly, mu string, b []*ring.Poly, c *ring.Poly, Delta *[]*ring.Poly, betaDelta uint64) bool {
-	// Compute Az using MatrixVectorMul
+	utils.ConvertVectorToNTT(r, *z)
+	utils.ConvertMatrixToNTT(r, A)
+	utils.ConvertVectorToNTT(r, b)
+	utils.ConvertPolyToNTT(r, c)
+
+	// Compute Az using MatrixVectorMulNTT
 	Az := make([]*ring.Poly, m)
 	utils.MatrixVectorMul(r, A, *z, Az)
 
-	// Compute bc using VectorPolyMul
+	// Compute bc using VectorPolyMulNTT
 	bc := make([]*ring.Poly, m)
 	utils.VectorPolyMul(r, b, c, bc)
+
+	utils.ConvertVectorFromNTT(r, *z)
+	utils.ConvertMatrixFromNTT(r, A)
+	utils.ConvertVectorFromNTT(r, b)
+	utils.ConvertPolyFromNTT(r, c)
+	utils.ConvertVectorFromNTT(r, Az)
+	utils.ConvertVectorFromNTT(r, bc)
 
 	// Subtract bc from Az to get Az_bc
 	Az_bc := make([]*ring.Poly, m)
 	utils.VectorSub(r, Az, bc, Az_bc)
 
-	// utils.printVector("Az - bc verification: ", Az_bc)
-
 	// Round Az_bc to the nearest multiple of p
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
-	// utils.printVector("Rounded Az_bc: ", Az_bc)
 
 	Az_bc_Delta := make([]*ring.Poly, m)
 	utils.VectorAdd(r, Az_bc, *Delta, Az_bc_Delta)
-
-	// utils.printVector("Rounded Az_bc_delta: ", Az_bc_Delta)
 
 	// Verify that c equals H_c([Az - bc]_p + Delta, mu)
 	computedC := H_c(r, A, b, Az_bc_Delta, mu)
 	if !r.Equal(*c, *computedC) {
 		return false
 	}
-
-	// utils.printPolynomial("Computed c: %v", computedC)
 
 	// Verify that ||Delta||_inf <= betaDelta
 	return CheckInfinityNorm(r, Delta, betaDelta)
@@ -512,8 +547,6 @@ func H_u(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, sid int, j int, D *map
 	hashGaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	u_j := utils.SamplePolyVector(d-1, hashGaussianSampler)
-
-	// utils.printVector("u_j", u_j)
 
 	return u_j
 }
