@@ -23,25 +23,23 @@ const (
 	n = 9
 	d = 10 // Length of joint noise vector
 
-	p         = 2
+	p         = 2 ^ 30
 	t         = 2 // Active threshold
 	k         = 3 // Total number of parties
 	ell       = 1
 	beta      = 10
-	betaDelta = 100000
+	betaDelta = 100000000000
 	kappa     = 23
 	logN      = 8
 	bound_e   = 1000
 	sigma_e   = 32
-	bound_c   = 5000
-	sigma_c   = 24296004000
 	boundE    = 1000
 	sigmaE    = 32
-	boundStar = 1000
-	sigmaStar = 32
-	// boundU    = 0
-	// sigmaU    = 0
-	keySize = 30
+	boundStar = 24296004000 * 2
+	sigmaStar = 24296004000
+	boundU    = 0
+	sigmaU    = 0
+	keySize   = 30
 )
 
 // Party struct holds all state and methods for a party in the protocol
