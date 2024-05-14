@@ -340,6 +340,31 @@ func VectorSub(r *ring.Ring, v1, v2, result []*ring.Poly) {
 	}
 }
 
+// SAMPLER FUNCTIONS
+
+// SamplePolyVector samples a vector of polynomials of a given length using the provided sampler.
+func SamplePolyVector(length int, sampler ring.Sampler) []*ring.Poly {
+	vector := make([]*ring.Poly, length)
+	for i := 0; i < length; i++ {
+		element := sampler.ReadNew()
+		vector[i] = &element
+	}
+	return vector
+}
+
+// SamplePolyMatrix samples a matrix of polynomials with given dimensions (rows and cols) using the provided sampler.
+func SamplePolyMatrix(rows, cols int, sampler ring.Sampler) [][]*ring.Poly {
+	matrix := make([][]*ring.Poly, rows)
+	for i := 0; i < rows; i++ {
+		matrix[i] = make([]*ring.Poly, cols)
+		for j := 0; j < cols; j++ {
+			element := sampler.ReadNew()
+			matrix[i][j] = &element
+		}
+	}
+	return matrix
+}
+
 // PRINT FUNCTIONS
 
 func PrintMatrix(label string, matrix *[][]*ring.Poly) {
