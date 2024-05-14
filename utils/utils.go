@@ -117,7 +117,6 @@ func RoundCoeffsToNearestMultiple(r *ring.Ring, poly *ring.Poly, p uint64) {
 }
 
 // MatrixVectorMul performs matrix-vector multiplication.
-// It takes a matrix of ring.Poly pointers, a vector of ring.Poly pointers, and outputs the result in a given result vector.
 func MatrixVectorMul(r *ring.Ring, M *[][]*ring.Poly, vec []*ring.Poly, result []*ring.Poly) {
 	// Convert all elements of the matrix and the vector to the NTT domain
 	ConvertMatrixToNTT(r, M)
@@ -128,19 +127,7 @@ func MatrixVectorMul(r *ring.Ring, M *[][]*ring.Poly, vec []*ring.Poly, result [
 		result[i] = r.NewPoly().CopyNew()
 		for j := range (*M)[i] {
 			temp := r.NewPoly()
-			p1Coeffs := make([]*big.Int, r.N())
-			p2Coeffs := make([]*big.Int, r.N())
-			p3Coeffs := make([]*big.Int, r.N())
-
-			r.PolyToBigint(*(*M)[i][j], 1, p1Coeffs)
-			r.PolyToBigint(*vec[j], 1, p2Coeffs)
-
-			for k := 0; k < r.N(); k++ {
-				p3Coeffs[k] = new(big.Int).Mul(p1Coeffs[k], p2Coeffs[k])
-				p3Coeffs[k] = new(big.Int).Mod(p3Coeffs[k], r.Modulus())
-			}
-
-			r.SetCoefficientsBigint(p3Coeffs, temp)
+			MulCoeffsNTT(r, (*M)[i][j], vec[j], &temp)
 			r.Add(*result[i], temp, *result[i])
 		}
 	}
@@ -152,8 +139,6 @@ func MatrixVectorMul(r *ring.Ring, M *[][]*ring.Poly, vec []*ring.Poly, result [
 }
 
 // MatrixMatrixMul performs matrix-matrix multiplication.
-// It takes two matrices of ring.Poly pointers, M1 of dimensions m x p and M2 of dimensions p x n,
-// and outputs the result in a given result matrix of dimensions m x n.
 func MatrixMatrixMul(r *ring.Ring, M1, M2 *[][]*ring.Poly, result *[][]*ring.Poly) {
 	if M1 == nil || M2 == nil || len(*M1) == 0 || len(*M2) == 0 || len((*M1)[0]) != len(*M2) {
 		log.Fatalf("Matrix dimensions are not compatible for multiplication.")
@@ -164,7 +149,6 @@ func MatrixMatrixMul(r *ring.Ring, M1, M2 *[][]*ring.Poly, result *[][]*ring.Pol
 	p := len((*M1)[0]) // Assuming all rows in M1 are of the same length
 	n := len((*M2)[0]) // Assuming all rows in M2 are of the same length
 
-	// Convert all elements of M1 and M2 to the NTT domain
 	// Convert all elements of M1 and M2 to the NTT domain
 	ConvertMatrixToNTT(r, M1)
 	ConvertMatrixToNTT(r, M2)
@@ -183,19 +167,7 @@ func MatrixMatrixMul(r *ring.Ring, M1, M2 *[][]*ring.Poly, result *[][]*ring.Pol
 		for j := 0; j < n; j++ {
 			for k := 0; k < p; k++ {
 				temp := r.NewPoly()
-				p1Coeffs := make([]*big.Int, r.N())
-				p2Coeffs := make([]*big.Int, r.N())
-				p3Coeffs := make([]*big.Int, r.N())
-
-				r.PolyToBigint(*(*M1)[i][k], 1, p1Coeffs)
-				r.PolyToBigint(*(*M2)[k][j], 1, p2Coeffs)
-
-				for l := 0; l < r.N(); l++ {
-					p3Coeffs[l] = new(big.Int).Mul(p1Coeffs[l], p2Coeffs[l])
-					p3Coeffs[l] = new(big.Int).Mod(p3Coeffs[l], r.Modulus())
-				}
-
-				r.SetCoefficientsBigint(p3Coeffs, temp)
+				MulCoeffsNTT(r, (*M1)[i][k], (*M2)[k][j], &temp)
 				r.Add(*(*result)[i][j], temp, *(*result)[i][j])
 			}
 		}
@@ -208,11 +180,11 @@ func MatrixMatrixMul(r *ring.Ring, M1, M2 *[][]*ring.Poly, result *[][]*ring.Pol
 }
 
 // VectorPolyMul performs element-wise multiplication of a vector by a polynomial.
-// It takes a vector of ring.Poly pointers, a single ring.Poly pointer, and outputs the result in a given result vector.
 func VectorPolyMul(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ring.Poly) {
 	// Convert the polynomial to the NTT domain
 	r.NTT(*poly, *poly)
 
+	// Ensure the result vector is initialized
 	for i := range vec {
 		if result[i] == nil {
 			result[i] = r.NewPoly().CopyNew()
@@ -225,25 +197,30 @@ func VectorPolyMul(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ri
 
 	// Perform the multiplications coefficient-wise
 	for i := range vec {
-		p1Coeffs := make([]*big.Int, r.N())
-		p2Coeffs := make([]*big.Int, r.N())
-		p3Coeffs := make([]*big.Int, r.N())
-
-		r.PolyToBigint(*vec[i], 1, p1Coeffs)
-		r.PolyToBigint(*poly, 1, p2Coeffs)
-
-		for j := 0; j < r.N(); j++ {
-			p3Coeffs[j] = new(big.Int).Mul(p1Coeffs[j], p2Coeffs[j])
-			p3Coeffs[j] = new(big.Int).Mod(p3Coeffs[j], r.Modulus())
-		}
-
-		r.SetCoefficientsBigint(p3Coeffs, *result[i])
+		MulCoeffsNTT(r, vec[i], poly, result[i])
 	}
 
 	// Convert the result and all other polynomials back to the original domain
 	ConvertVectorFromNTT(r, result)
 	ConvertVectorFromNTT(r, vec)
 	r.INTT(*poly, *poly)
+}
+
+// MulCoeffsNTT performs coefficient-wise multiplication of two polynomials in the NTT domain.
+func MulCoeffsNTT(r *ring.Ring, p1, p2, result *ring.Poly) {
+	p1Coeffs := make([]*big.Int, r.N())
+	p2Coeffs := make([]*big.Int, r.N())
+	p3Coeffs := make([]*big.Int, r.N())
+
+	r.PolyToBigint(*p1, 1, p1Coeffs)
+	r.PolyToBigint(*p2, 1, p2Coeffs)
+
+	for i := 0; i < r.N(); i++ {
+		p3Coeffs[i] = new(big.Int).Mul(p1Coeffs[i], p2Coeffs[i])
+		p3Coeffs[i] = new(big.Int).Mod(p3Coeffs[i], r.Modulus())
+	}
+
+	r.SetCoefficientsBigint(p3Coeffs, *result)
 }
 
 // MatrixAdd adds two matrices of ring.Poly element-wise and stores the result in a given result matrix.
