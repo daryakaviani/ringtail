@@ -88,7 +88,7 @@ func BCMGen(r *ring.Ring, A *[][]*ring.Poly, uniformSampler *ring.UniformSampler
 	utils.PrintVector("e: ", e)
 
 	b := make([]*ring.Poly, m)
-	utils.MatrixVectorMulNTT(r, A, s, b)
+	utils.MatrixVectorMul(r, A, s, b)
 	utils.VectorAdd(r, b, e, b)
 
 	return s, b
@@ -104,7 +104,7 @@ func BCMSign(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Pol
 
 	// Compute h using the new helper function
 	h := make([]*ring.Poly, m)
-	utils.MatrixVectorMulNTT(r, A, rVec, h)
+	utils.MatrixVectorMul(r, A, rVec, h)
 	utils.PrintVector("Original h: ", h)
 
 	// Round h to the nearest multiple of p
@@ -118,7 +118,7 @@ func BCMSign(r *ring.Ring, uniformSampler *ring.UniformSampler, A *[][]*ring.Pol
 
 	// Compute z using the new helper function
 	z := make([]*ring.Poly, n)
-	utils.VectorPolyMulNTT(r, s, c, z)
+	utils.VectorPolyMul(r, s, c, z)
 	utils.VectorAdd(r, z, rVec, z)
 
 	return c, z
@@ -189,11 +189,11 @@ func H(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, h []*ring.Poly, mu strin
 func BCMVer(r *ring.Ring, A *[][]*ring.Poly, b []*ring.Poly, mu string, c *ring.Poly, z []*ring.Poly) bool {
 	// Compute Az using MatrixVectorMul
 	Az := make([]*ring.Poly, m)
-	utils.MatrixVectorMulNTT(r, A, z, Az)
+	utils.MatrixVectorMul(r, A, z, Az)
 
 	// Compute bc using VectorPolyMul
 	bc := make([]*ring.Poly, m)
-	utils.VectorPolyMulNTT(r, b, c, bc)
+	utils.VectorPolyMul(r, b, c, bc)
 
 	// Subtract bc from Az to get Az_bc
 	Az_bc := make([]*ring.Poly, m)
