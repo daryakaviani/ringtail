@@ -111,7 +111,7 @@ func main() {
 	for _, partyID := range T {
 		parties[partyID].Lambda = lagrangeCoeffs[partyID]
 		parties[partyID].Seed = (*seeds)[partyID]
-		D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, mu, []byte(PRFKey), T)
+		D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, []byte(PRFKey), T)
 	}
 	signRound1Duration = time.Since(start)
 
@@ -188,7 +188,7 @@ func generateRandomSeed() []byte {
 }
 
 // SignRound1 performs the first round of signing
-func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, mu string, PRFKey []byte, T []int) (*[][]*ring.Poly, *[]*ring.Poly) {
+func (party *Party) SignRound1(A *[][]*ring.Poly, sid int, PRFKey []byte, T []int) (*[][]*ring.Poly, *[]*ring.Poly) {
 	r := party.Ring
 	uniformSampler := party.UniformSampler
 	seeds := party.Seed
