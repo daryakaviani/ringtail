@@ -379,56 +379,36 @@ func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[*ring.Poly], betaDelta
 // H_u hashes parameters to a Gaussian distribution
 func H_u(r *ring.Ring, A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly], sid int, j int, D *map[int]structs.Matrix[*ring.Poly], mu string, masks *map[int]structs.Vector[*ring.Poly]) structs.Vector[*ring.Poly] {
 	hasher := sha3.NewShake128()
+	buf := new(bytes.Buffer)
 
-	var buffer bytes.Buffer
-
-	for _, row := range A {
-		for _, poly := range row {
-			data, err := poly.MarshalBinary()
-			if err != nil {
-				log.Fatalf("Error marshalling poly: %v\n", err)
-			}
-			buffer.Write(data)
-		}
+	// Write the matrix A to the buffer
+	if _, err := A.WriteTo(buf); err != nil {
+		log.Fatalf("Error writing matrix A: %v\n", err)
 	}
 
-	for _, poly := range b {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
+	// Write the vector b to the buffer
+	if _, err := b.WriteTo(buf); err != nil {
+		log.Fatalf("Error writing vector b: %v\n", err)
 	}
 
-	binary.Write(&buffer, binary.BigEndian, int64(sid))
-
-	binary.Write(&buffer, binary.BigEndian, int64(j))
+	binary.Write(buf, binary.BigEndian, int64(sid))
+	binary.Write(buf, binary.BigEndian, int64(j))
 
 	for _, D_h := range *D {
-		for _, row := range D_h {
-			for _, poly := range row {
-				data, err := poly.MarshalBinary()
-				if err != nil {
-					log.Fatalf("Error marshalling poly: %v\n", err)
-				}
-				buffer.Write(data)
-			}
+		if _, err := D_h.WriteTo(buf); err != nil {
+			log.Fatalf("Error writing matrix D_h: %v\n", err)
 		}
 	}
 
-	buffer.WriteString(mu)
+	buf.WriteString(mu)
 
 	for _, mask := range *masks {
-		for _, poly := range mask {
-			data, err := poly.MarshalBinary()
-			if err != nil {
-				log.Fatalf("Error marshalling poly: %v\n", err)
-			}
-			buffer.Write(data)
+		if _, err := mask.WriteTo(buf); err != nil {
+			log.Fatalf("Error writing vector mask: %v\n", err)
 		}
 	}
 
-	_, err := hasher.Write(buffer.Bytes())
+	_, err := hasher.Write(buf.Bytes())
 	if err != nil {
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
@@ -452,14 +432,13 @@ func H_u(r *ring.Ring, A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly
 // PRF generates pseudorandom ring elements
 func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) structs.Vector[*ring.Poly] {
 	hasher := sha3.NewShake128()
+	buf := new(bytes.Buffer)
 
-	var buffer bytes.Buffer
+	binary.Write(buf, binary.BigEndian, PRFKey)
+	binary.Write(buf, binary.BigEndian, sd_ij)
+	binary.Write(buf, binary.BigEndian, int64(sid))
 
-	binary.Write(&buffer, binary.BigEndian, PRFKey)
-	binary.Write(&buffer, binary.BigEndian, sd_ij)
-	binary.Write(&buffer, binary.BigEndian, int64(sid))
-
-	_, err := hasher.Write(buffer.Bytes())
+	_, err := hasher.Write(buf.Bytes())
 	if err != nil {
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
@@ -480,38 +459,23 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) structs.Vector[*rin
 // H_c hashes to low norm ring elements
 func H_c(r *ring.Ring, A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly], h structs.Vector[*ring.Poly], mu string) ring.Poly {
 	hasher := sha3.NewShake128()
+	buf := new(bytes.Buffer)
 
-	var buffer bytes.Buffer
-
-	for _, row := range A {
-		for _, poly := range row {
-			data, err := poly.MarshalBinary()
-			if err != nil {
-				log.Fatalf("Error marshalling poly: %v\n", err)
-			}
-			buffer.Write(data)
-		}
+	if _, err := A.WriteTo(buf); err != nil {
+		log.Fatalf("Error writing matrix A: %v\n", err)
 	}
 
-	for _, poly := range b {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
+	if _, err := b.WriteTo(buf); err != nil {
+		log.Fatalf("Error writing vector b: %v\n", err)
 	}
 
-	for _, poly := range h {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
-		}
-		buffer.Write(data)
+	if _, err := h.WriteTo(buf); err != nil {
+		log.Fatalf("Error writing vector h: %v\n", err)
 	}
 
-	binary.Write(&buffer, binary.BigEndian, []byte(mu))
+	binary.Write(buf, binary.BigEndian, []byte(mu))
 
-	_, err := hasher.Write(buffer.Bytes())
+	_, err := hasher.Write(buf.Bytes())
 	if err != nil {
 		log.Fatalf("Error writing hash: %v\n", err)
 	}
@@ -620,16 +584,14 @@ func (party *Party) PRNGKey() []byte {
 	skShare := party.SkShare
 
 	hasher := sha3.NewShake128()
-	var buffer bytes.Buffer
+	buf := new(bytes.Buffer)
 	for _, poly := range skShare {
-		data, err := poly.MarshalBinary()
-		if err != nil {
-			log.Fatalf("Error marshalling poly: %v\n", err)
+		if _, err := poly.WriteTo(buf); err != nil {
+			log.Fatalf("Error writing poly to buffer: %v\n", err)
 		}
-		buffer.Write(data)
 	}
 
-	hasher.Write(buffer.Bytes())
+	hasher.Write(buf.Bytes())
 
 	hashOutputLength := keySize
 	skHash := make([]byte, hashOutputLength)
