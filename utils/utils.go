@@ -194,8 +194,9 @@ func VectorPolyMul(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ri
 
 	// Perform the multiplications coefficient-wise
 	for i := range vec {
-		r.IMForm(*poly, *poly)
-		r.MulCoeffsMontgomery(*vec[i], *poly, *result[i])
+		temp := r.NewPoly()
+		r.MForm(*vec[i], temp)
+		r.MulCoeffsMontgomery(temp, *poly, *result[i])
 	}
 
 	// Convert the result and all other polynomials back to the original domain
