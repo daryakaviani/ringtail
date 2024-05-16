@@ -124,8 +124,8 @@ func MatrixVectorMul(r *ring.Ring, M *[][]*ring.Poly, vec []*ring.Poly, result [
 		result[i] = r.NewPoly().CopyNew()
 		for j := range (*M)[i] {
 			temp := r.NewPoly()
-			MulCoeffsNTT(r, (*M)[i][j], vec[j], &temp)
-			r.Add(*result[i], temp, *result[i])
+			r.MForm(*(*M)[i][j], temp)
+			r.MulCoeffsMontgomeryThenAdd(temp, *vec[j], *result[i])
 		}
 	}
 
@@ -164,8 +164,8 @@ func MatrixMatrixMul(r *ring.Ring, M1, M2 *[][]*ring.Poly, result *[][]*ring.Pol
 		for j := 0; j < n; j++ {
 			for k := 0; k < p; k++ {
 				temp := r.NewPoly()
-				MulCoeffsNTT(r, (*M1)[i][k], (*M2)[k][j], &temp)
-				r.Add(*(*result)[i][j], temp, *(*result)[i][j])
+				r.MForm(*(*M1)[i][k], temp)
+				r.MulCoeffsMontgomeryThenAdd(temp, *(*M2)[k][j], *(*result)[i][j])
 			}
 		}
 	}
@@ -194,7 +194,8 @@ func VectorPolyMul(r *ring.Ring, vec []*ring.Poly, poly *ring.Poly, result []*ri
 
 	// Perform the multiplications coefficient-wise
 	for i := range vec {
-		MulCoeffsNTT(r, vec[i], poly, result[i])
+		r.IMForm(*poly, *poly)
+		r.MulCoeffsMontgomery(*vec[i], *poly, *result[i])
 	}
 
 	// Convert the result and all other polynomials back to the original domain
