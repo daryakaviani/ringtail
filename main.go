@@ -46,12 +46,12 @@ type Party struct {
 	ID             int
 	Ring           *ring.Ring
 	UniformSampler *ring.UniformSampler
-	SkShare        structs.Vector[*ring.Poly]
+	SkShare        structs.Vector[ring.Poly]
 	Seed           [][]byte
-	Mask           structs.Vector[*ring.Poly]
-	R              structs.Matrix[*ring.Poly]
+	Mask           structs.Vector[ring.Poly]
+	R              structs.Matrix[ring.Poly]
 	C              ring.Poly
-	H              structs.Vector[*ring.Poly]
+	H              structs.Vector[ring.Poly]
 	Lambda         ring.Poly
 }
 
@@ -105,8 +105,8 @@ func main() {
 	T := []int{0, 1} // Active parties
 	start = time.Now()
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
-	D := make(map[int]structs.Matrix[*ring.Poly])
-	masks := make(map[int]structs.Vector[*ring.Poly])
+	D := make(map[int]structs.Matrix[ring.Poly])
+	masks := make(map[int]structs.Vector[ring.Poly])
 	for _, partyID := range T {
 		parties[partyID].Lambda = lagrangeCoeffs[partyID]
 		parties[partyID].Seed = (*seeds)[partyID]
@@ -116,7 +116,7 @@ func main() {
 
 	// SIGNATURE ROUND 2
 	start = time.Now()
-	z := make(map[int]structs.Vector[*ring.Poly])
+	z := make(map[int]structs.Vector[ring.Poly])
 	for _, partyID := range T {
 		z[partyID] = parties[partyID].SignRound2(A, b, &D, &masks, sid, mu, T, []byte(PRFKey), seeds)
 	}
@@ -144,13 +144,13 @@ func main() {
 }
 
 // Setup generates the public parameters
-func Setup(uniformSampler *ring.UniformSampler) structs.Matrix[*ring.Poly] {
+func Setup(uniformSampler *ring.UniformSampler) structs.Matrix[ring.Poly] {
 	A := utils.SamplePolyMatrix(m, n, uniformSampler)
 	return A
 }
 
 // Gen generates the secret shares, seeds, and the public parameter b
-func Gen(r *ring.Ring, A structs.Matrix[*ring.Poly], uniformSampler *ring.UniformSampler, trustedDealerKey []byte) (*map[int]structs.Vector[*ring.Poly], *map[int][][]byte, structs.Vector[*ring.Poly]) {
+func Gen(r *ring.Ring, A structs.Matrix[ring.Poly], uniformSampler *ring.UniformSampler, trustedDealerKey []byte) (*map[int]structs.Vector[ring.Poly], *map[int][][]byte, structs.Vector[ring.Poly]) {
 	prng, _ := sampling.NewKeyedPRNG(trustedDealerKey)
 	gaussianParams := ring.DiscreteGaussian{Sigma: sigma_e, Bound: bound_e}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
@@ -161,7 +161,7 @@ func Gen(r *ring.Ring, A structs.Matrix[*ring.Poly], uniformSampler *ring.Unifor
 
 	e := utils.SamplePolyVector(m, gaussianSampler)
 
-	b := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	b := structs.Vector[ring.Poly](make([]ring.Poly, m))
 	utils.MatrixVectorMul(r, A, s, b)
 	utils.VectorAdd(r, b, e, b)
 
@@ -187,44 +187,81 @@ func generateRandomSeed() []byte {
 }
 
 // SignRound1 performs the first round of signing
-func (party *Party) SignRound1(A structs.Matrix[*ring.Poly], sid int, PRFKey []byte, T []int) (structs.Matrix[*ring.Poly], structs.Vector[*ring.Poly]) {
+// SignRound1 performs the first round of signing
+func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []byte, T []int) (structs.Matrix[ring.Poly], structs.Vector[ring.Poly]) {
 	r := party.Ring
 	uniformSampler := party.UniformSampler
 	seeds := party.Seed
 
-	mask := structs.Vector[*ring.Poly](make([]*ring.Poly, n))
+	// Initialize the mask vector
+	mask := structs.Vector[ring.Poly](make([]ring.Poly, n))
+	for i := range mask {
+		mask[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
+
 	for _, j := range T {
 		mask_j := PRF(r, sid, seeds[j], PRFKey)
 		utils.VectorAdd(r, mask, mask_j, mask)
 	}
 
+	// Initialize r_star
 	r_star := utils.SamplePolyVector(n, uniformSampler)
+	for i := range r_star {
+		if r_star[i].Coeffs == nil {
+			fmt.Println("r_star not initialized properly at index", i)
+		}
+	}
 
+	// Initialize e_star
 	skHash := party.PRNGKey()
 	prng, _ := sampling.NewKeyedPRNG(skHash)
 	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaStar, Bound: boundStar}
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 	e_star := utils.SamplePolyVector(m, gaussianSampler)
+	for i := range e_star {
+		if e_star[i].Coeffs == nil {
+			fmt.Println("e_star not initialized properly at index", i)
+		}
+	}
 
+	// Initialize R_i
 	R_i := utils.SamplePolyMatrix(n, d-1, uniformSampler)
 
+	// Initialize E_i
 	gaussianParams = ring.DiscreteGaussian{Sigma: sigmaE, Bound: boundE}
 	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, false)
 	E_i := utils.SamplePolyMatrix(m, d-1, gaussianSampler)
 
-	concatenatedR := structs.Matrix[*ring.Poly](make([][]*ring.Poly, n))
-	concatenatedE := structs.Matrix[*ring.Poly](make([][]*ring.Poly, m))
-
-	for i := 0; i < n; i++ {
-		concatenatedR[i] = append([]*ring.Poly{r_star[i]}, R_i[i]...)
+	// Ensure concatenatedR is properly initialized
+	concatenatedR := structs.Matrix[ring.Poly](make([][]ring.Poly, n))
+	for i := range concatenatedR {
+		concatenatedR[i] = append([]ring.Poly{r_star[i]}, R_i[i]...)
+		for j := range concatenatedR[i] {
+			if concatenatedR[i][j].Coeffs == nil {
+				fmt.Printf("concatenatedR not initialized properly at index [%d][%d]\n", i, j)
+			}
+		}
 	}
 	party.R = concatenatedR
 
-	for i := 0; i < m; i++ {
-		concatenatedE[i] = append([]*ring.Poly{e_star[i]}, E_i[i]...)
+	// Ensure concatenatedE is properly initialized
+	concatenatedE := structs.Matrix[ring.Poly](make([][]ring.Poly, m))
+	for i := range concatenatedE {
+		concatenatedE[i] = append([]ring.Poly{e_star[i]}, E_i[i]...)
+		for j := range concatenatedE[i] {
+			if concatenatedE[i][j].Coeffs == nil {
+				fmt.Printf("concatenatedE not initialized properly at index [%d][%d]\n", i, j)
+			}
+		}
 	}
 
-	D := structs.Matrix[*ring.Poly](make([][]*ring.Poly, m))
+	D := structs.Matrix[ring.Poly](make([][]ring.Poly, m))
+	for i := range D {
+		D[i] = make([]ring.Poly, n)
+		for j := range D[i] {
+			D[i][j] = r.NewPoly() // Ensure each element is properly initialized
+		}
+	}
 	utils.MatrixMatrixMul(r, A, concatenatedR, D)
 	utils.MatrixAdd(r, concatenatedE, D, D)
 
@@ -232,18 +269,18 @@ func (party *Party) SignRound1(A structs.Matrix[*ring.Poly], sid int, PRFKey []b
 }
 
 // SignRound2 performs the second round of signing
-func (party *Party) SignRound2(A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly], D *map[int]structs.Matrix[*ring.Poly], masks *map[int]structs.Vector[*ring.Poly], sid int, mu string, T []int, PRFKey []byte, seeds *map[int][][]byte) structs.Vector[*ring.Poly] {
+func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], D *map[int]structs.Matrix[ring.Poly], masks *map[int]structs.Vector[ring.Poly], sid int, mu string, T []int, PRFKey []byte, seeds *map[int][][]byte) structs.Vector[ring.Poly] {
 	r := party.Ring
 	partyID := party.ID
 	concatR := party.R
 	s_i := party.SkShare
 	lambda := party.Lambda
 
-	u := make(map[int]structs.Vector[*ring.Poly], d)
+	u := make(map[int]structs.Vector[ring.Poly], d)
 	onePoly := r.NewMonomialXi(0)
 
 	for _, j := range T {
-		oneSlice := structs.Vector[*ring.Poly]{onePoly.CopyNew()}
+		oneSlice := structs.Vector[ring.Poly]{onePoly}
 		u[j] = oneSlice
 		if d > 1 {
 			u_j := H_u(r, A, b, sid, j, D, mu, masks)
@@ -251,10 +288,16 @@ func (party *Party) SignRound2(A structs.Matrix[*ring.Poly], b structs.Vector[*r
 		}
 	}
 
-	h := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	h := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range h {
+		h[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 
 	for j, D_j := range *D {
-		D_j_u_j := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+		D_j_u_j := structs.Vector[ring.Poly](make([]ring.Poly, m))
+		for i := range D_j_u_j {
+			D_j_u_j[i] = r.NewPoly() // Ensure each element is properly initialized
+		}
 		utils.MatrixVectorMul(r, D_j, u[j], D_j_u_j)
 		utils.VectorAdd(r, h, D_j_u_j, h)
 	}
@@ -267,16 +310,26 @@ func (party *Party) SignRound2(A structs.Matrix[*ring.Poly], b structs.Vector[*r
 	c := H_c(r, A, b, h, mu)
 	party.C = c
 
-	mPrime := structs.Vector[*ring.Poly](make([]*ring.Poly, n))
+	mPrime := structs.Vector[ring.Poly](make([]ring.Poly, n))
+	for i := range mPrime {
+		mPrime[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
+
 	for _, j := range T {
 		mask_j := PRF(r, sid, (*seeds)[j][partyID], PRFKey)
 		utils.VectorAdd(r, mPrime, mask_j, mPrime)
 	}
 
-	z_i := structs.Vector[*ring.Poly](make([]*ring.Poly, n))
+	z_i := structs.Vector[ring.Poly](make([]ring.Poly, n))
+	for i := range z_i {
+		z_i[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.MatrixVectorMul(r, concatR, u[partyID], z_i)
 	utils.VectorAdd(r, z_i, mPrime, z_i)
-	s_c_lambda := structs.Vector[*ring.Poly](make([]*ring.Poly, n))
+	s_c_lambda := structs.Vector[ring.Poly](make([]ring.Poly, n))
+	for i := range s_c_lambda {
+		s_c_lambda[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.VectorPolyMul(r, s_i, c, s_c_lambda)
 	utils.VectorPolyMul(r, s_c_lambda, lambda, s_c_lambda)
 	utils.VectorAdd(r, z_i, s_c_lambda, z_i)
@@ -285,59 +338,89 @@ func (party *Party) SignRound2(A structs.Matrix[*ring.Poly], b structs.Vector[*r
 }
 
 // SignFinalize finalizes the signature
-func (party *Party) SignFinalize(z map[int]structs.Vector[*ring.Poly], masks map[int]structs.Vector[*ring.Poly], A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly]) (ring.Poly, structs.Vector[*ring.Poly], structs.Vector[*ring.Poly]) {
+func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[int]structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly]) (ring.Poly, structs.Vector[ring.Poly], structs.Vector[ring.Poly]) {
 	r := party.Ring
 	c := party.C
 	h := party.H
 
-	z_sum := structs.Vector[*ring.Poly](make([]*ring.Poly, n))
+	z_sum := structs.Vector[ring.Poly](make([]ring.Poly, n))
+	for i := range z_sum {
+		z_sum[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 
 	for j, z_j := range z {
 		mask_j := masks[j]
 		for i := 0; i < n; i++ {
-			if z_sum[i] == nil {
-				z_sum[i] = r.NewPoly().CopyNew()
+			if len(z_j) <= i {
+				fmt.Printf("Error: z_j[%d] is out of range\n", i)
 			}
-			r.Sub(*(z_j)[i], *(mask_j)[i], *(z_j)[i])
-			r.Add(*z_sum[i], *(z_j)[i], *z_sum[i])
+			if len(mask_j) <= i {
+				fmt.Printf("Error: mask_j[%d] is out of range\n", i)
+			}
+			r.Sub(z_j[i], mask_j[i], z_j[i])
+			r.Add(z_sum[i], z_j[i], z_sum[i])
 		}
 	}
 
-	Az := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	Az := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range Az {
+		Az[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.MatrixVectorMul(r, A, z_sum, Az)
 
-	bc := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	bc := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range bc {
+		bc[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.VectorPolyMul(r, b, c, bc)
 
-	Az_bc := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	Az_bc := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range Az_bc {
+		Az_bc[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.VectorSub(r, Az, bc, Az_bc)
 
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 
-	Delta := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	Delta := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range Delta {
+		Delta[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.VectorSub(r, h, Az_bc, Delta)
 
 	return party.C, z_sum, Delta
 }
 
 // Verify verifies the correctness of the signature
-func Verify(r *ring.Ring, z structs.Vector[*ring.Poly], A structs.Matrix[*ring.Poly], mu string, b structs.Vector[*ring.Poly], c ring.Poly, Delta structs.Vector[*ring.Poly], betaDelta uint64) bool {
-	Az := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], mu string, b structs.Vector[ring.Poly], c ring.Poly, Delta structs.Vector[ring.Poly], betaDelta uint64) bool {
+	Az := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range Az {
+		Az[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.MatrixVectorMul(r, A, z, Az)
 
-	bc := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	bc := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range bc {
+		bc[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.VectorPolyMul(r, b, c, bc)
 
-	Az_bc := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	Az_bc := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range Az_bc {
+		Az_bc[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.VectorSub(r, Az, bc, Az_bc)
 
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 
-	Az_bc_Delta := structs.Vector[*ring.Poly](make([]*ring.Poly, m))
+	Az_bc_Delta := structs.Vector[ring.Poly](make([]ring.Poly, m))
+	for i := range Az_bc_Delta {
+		Az_bc_Delta[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
 	utils.VectorAdd(r, Az_bc, Delta, Az_bc_Delta)
 
 	computedC := H_c(r, A, b, Az_bc_Delta, mu)
@@ -349,7 +432,7 @@ func Verify(r *ring.Ring, z structs.Vector[*ring.Poly], A structs.Matrix[*ring.P
 }
 
 // CheckInfinityNorm checks if the infinity norm of the vector of polynomial Delta is less than or equal to betaDelta
-func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[*ring.Poly], betaDelta uint64) bool {
+func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta uint64) bool {
 	maxValue := big.NewInt(0)
 
 	for _, poly := range Delta {
@@ -357,7 +440,7 @@ func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[*ring.Poly], betaDelta
 		for i := range coeffsBigint {
 			coeffsBigint[i] = big.NewInt(0)
 		}
-		r.PolyToBigintCentered(*poly, 1, coeffsBigint)
+		r.PolyToBigintCentered(poly, 1, coeffsBigint)
 
 		for _, coeff := range coeffsBigint {
 			absCoeff := new(big.Int).Abs(coeff)
@@ -377,7 +460,7 @@ func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[*ring.Poly], betaDelta
 // HASHES & PRF
 
 // H_u hashes parameters to a Gaussian distribution
-func H_u(r *ring.Ring, A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly], sid int, j int, D *map[int]structs.Matrix[*ring.Poly], mu string, masks *map[int]structs.Vector[*ring.Poly]) structs.Vector[*ring.Poly] {
+func H_u(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], sid int, j int, D *map[int]structs.Matrix[ring.Poly], mu string, masks *map[int]structs.Vector[ring.Poly]) structs.Vector[ring.Poly] {
 	hasher := sha3.NewShake128()
 	buf := new(bytes.Buffer)
 
@@ -430,7 +513,7 @@ func H_u(r *ring.Ring, A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly
 }
 
 // PRF generates pseudorandom ring elements
-func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) structs.Vector[*ring.Poly] {
+func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) structs.Vector[ring.Poly] {
 	hasher := sha3.NewShake128()
 	buf := new(bytes.Buffer)
 
@@ -457,7 +540,7 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) structs.Vector[*rin
 }
 
 // H_c hashes to low norm ring elements
-func H_c(r *ring.Ring, A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly], h structs.Vector[*ring.Poly], mu string) ring.Poly {
+func H_c(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], h structs.Vector[ring.Poly], mu string) ring.Poly {
 	hasher := sha3.NewShake128()
 	buf := new(bytes.Buffer)
 
@@ -499,21 +582,21 @@ func H_c(r *ring.Ring, A structs.Matrix[*ring.Poly], b structs.Vector[*ring.Poly
 }
 
 // ShamirSecretSharing shares each coefficient of a vector of ring.Poly across k parties using (t, k)-threshold Shamir secret sharing.
-func ShamirSecretSharing(r *ring.Ring, s structs.Vector[*ring.Poly], t, k int) map[int]structs.Vector[*ring.Poly] {
+func ShamirSecretSharing(r *ring.Ring, s structs.Vector[ring.Poly], t, k int) map[int]structs.Vector[ring.Poly] {
 	degree := r.N()
 
-	shares := make(map[int]structs.Vector[*ring.Poly], k)
+	shares := make(map[int]structs.Vector[ring.Poly], k)
 	for i := 0; i < k; i++ {
-		shares[i] = structs.Vector[*ring.Poly](make([]*ring.Poly, len(s)))
+		shares[i] = structs.Vector[ring.Poly](make([]ring.Poly, len(s)))
 		for j := range shares[i] {
 			newPoly := r.NewPoly()
-			shares[i][j] = &newPoly
+			shares[i][j] = newPoly
 		}
 	}
 
 	for polyIndex, poly := range s {
 		coeffs := make([]*big.Int, degree)
-		r.PolyToBigint(*poly, 1, coeffs)
+		r.PolyToBigint(poly, 1, coeffs)
 
 		for coeffIndex, secret := range coeffs {
 			polyCoeffs := make([]*big.Int, t)
