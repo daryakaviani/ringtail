@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"log"
 	"math/big"
 
@@ -10,80 +9,6 @@ import (
 )
 
 const logN = 8
-
-func MulPolyNaive(r *ring.Ring, p1 ring.Poly, p2 ring.Poly, p3 ring.Poly) {
-	degree := 1 << logN // Since we are in a ring modulo x^8 + 1
-
-	q := r.Modulus()
-	// Initialize result slice with big.Ints set to zero
-	result := make([]*big.Int, degree)
-	for i := range result {
-		result[i] = big.NewInt(0)
-	}
-
-	p1Coeffs := make([]*big.Int, degree)
-	r.PolyToBigint(p1, 1, p1Coeffs)
-
-	p2Coeffs := make([]*big.Int, degree)
-	r.PolyToBigint(p2, 1, p2Coeffs)
-
-	// Polynomial multiplication (convolution)
-	for i := range p1Coeffs {
-		for j := range p2Coeffs {
-			if i+j < degree {
-				// Multiply coefficients and add to the right place
-				temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
-				result[i+j].Add(result[i+j], temp)
-			} else {
-				if (((i+j)-((i+j)%degree))/(2<<logN))%2 == 0 {
-					// Wrap around due to cyclotomic ring, i+j >= degree
-					temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
-					result[(i+j)%degree].Add(result[(i+j)%degree], temp)
-				} else {
-					// Wrap around due to cyclotomic ring, i+j >= degree
-					temp := new(big.Int).Mul(p1Coeffs[i], p2Coeffs[j])
-					result[(i+j)%degree].Sub(result[(i+j)%degree], temp) // subtracting because of x^8 + 1
-				}
-			}
-		}
-	}
-
-	// Reduce each coefficient modulo q
-	for i := range result {
-		result[i].Mod(result[i], q)
-	}
-
-	r.SetCoefficientsBigint(result, p3)
-}
-
-// Sets p3 = p1 * p2 by first converting into NTT, multiplying coefficient-wise, and then converting out of NTT with INTT
-func MulPolyNTT(r *ring.Ring, p1 ring.Poly, p2 ring.Poly, p3 ring.Poly) {
-	// Transform p1 and p2 to the NTT domain
-	r.NTT(p1, p1)
-	r.NTT(p2, p2)
-
-	PrintPolynomial("p1:", p1)
-	PrintPolynomial("p2:", p2)
-	p1Coeffs := make([]*big.Int, r.N())
-	p2Coeffs := make([]*big.Int, r.N())
-	p3Coeffs := make([]*big.Int, r.N())
-
-	r.PolyToBigint(p1, 1, p1Coeffs)
-	r.PolyToBigint(p2, 1, p2Coeffs)
-
-	// Perform coefficient-wise multiplication in the NTT domain
-	for i := 0; i < r.N(); i++ {
-		p3Coeffs[i] = new(big.Int).Mul(p1Coeffs[i], p2Coeffs[i])
-		p3Coeffs[i] = new(big.Int).Mod(p3Coeffs[i], r.Modulus())
-	}
-
-	r.SetCoefficientsBigint(p3Coeffs, p3)
-
-	// Transform the result back to the standard domain using INTT
-	r.INTT(p3, p3)
-	r.INTT(p1, p1)
-	r.INTT(p2, p2)
-}
 
 // RoundPolyCoefficientsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
 // and updates the polynomial using the SetCoefficientsBigint method.
@@ -122,11 +47,12 @@ func MatrixVectorMul(r *ring.Ring, M structs.Matrix[ring.Poly], vec structs.Vect
 	ConvertVectorToNTT(r, vec)
 
 	// Perform the multiplications coefficient-wise
+	temp := r.NewPoly()
+
 	for i := range M {
 		result[i] = r.NewPoly()
 		for j := range (M)[i] {
-			temp := r.NewPoly()
-			r.MForm((M)[i][j], temp)
+			r.MForm(M[i][j], temp)
 			r.MulCoeffsMontgomeryThenAdd(temp, vec[j], result[i])
 		}
 	}
@@ -145,8 +71,8 @@ func MatrixMatrixMul(r *ring.Ring, M1, M2 structs.Matrix[ring.Poly], result stru
 	}
 
 	m := len(M1)
-	p := len((M1)[0]) // Assuming all rows in M1 are of the same length
-	n := len((M2)[0]) // Assuming all rows in M2 are of the same length
+	p := len(M1[0]) // Assuming all rows in M1 are of the same length
+	n := len(M2[0]) // Assuming all rows in M2 are of the same length
 
 	// Convert all elements of M1 and M2 to the NTT domain
 	ConvertMatrixToNTT(r, M1)
@@ -154,20 +80,20 @@ func MatrixMatrixMul(r *ring.Ring, M1, M2 structs.Matrix[ring.Poly], result stru
 
 	// Initialize the result matrix with zeros
 	for i := 0; i < m; i++ {
-		(result)[i] = make([]ring.Poly, n)
+		result[i] = make([]ring.Poly, n)
 		for j := 0; j < n; j++ {
-			newPoly := r.NewPoly()
-			(result)[i][j] = newPoly
+			result[i][j] = r.NewPoly()
 		}
 	}
+
+	temp := r.NewPoly()
 
 	// Perform matrix multiplication coefficient-wise
 	for i := 0; i < m; i++ {
 		for j := 0; j < n; j++ {
 			for k := 0; k < p; k++ {
-				temp := r.NewPoly()
-				r.MForm((M1)[i][k], temp)
-				r.MulCoeffsMontgomeryThenAdd(temp, (M2)[k][j], (result)[i][j])
+				r.MForm(M1[i][k], temp)
+				r.MulCoeffsMontgomeryThenAdd(temp, M2[k][j], result[i][j])
 			}
 		}
 	}
@@ -183,20 +109,13 @@ func VectorPolyMul(r *ring.Ring, vec structs.Vector[ring.Poly], poly ring.Poly, 
 	// Convert the polynomial to the NTT domain
 	r.NTT(poly, poly)
 
-	// Ensure the result vector is initialized
-	// for i := range vec {
-	// 	// if result[i] == (ring.Poly{}) {
-	// 	// 	result[i] = r.NewPoly()
-	// 	// }
-	// }
-
 	// Convert all elements of the vector to the NTT domain
 	ConvertVectorToNTT(r, vec)
 	ConvertVectorToNTT(r, result)
+	temp := r.NewPoly()
 
 	// Perform the multiplications coefficient-wise
 	for i := range vec {
-		temp := r.NewPoly()
 		r.MForm(vec[i], temp)
 		r.MulCoeffsMontgomery(temp, poly, result[i])
 	}
@@ -207,23 +126,6 @@ func VectorPolyMul(r *ring.Ring, vec structs.Vector[ring.Poly], poly ring.Poly, 
 	r.INTT(poly, poly)
 }
 
-// MulCoeffsNTT performs coefficient-wise multiplication of two polynomials in the NTT domain.
-func MulCoeffsNTT(r *ring.Ring, p1, p2, result ring.Poly) {
-	p1Coeffs := make([]*big.Int, r.N())
-	p2Coeffs := make([]*big.Int, r.N())
-	p3Coeffs := make([]*big.Int, r.N())
-
-	r.PolyToBigint(p1, 1, p1Coeffs)
-	r.PolyToBigint(p2, 1, p2Coeffs)
-
-	for i := 0; i < r.N(); i++ {
-		p3Coeffs[i] = new(big.Int).Mul(p1Coeffs[i], p2Coeffs[i])
-		p3Coeffs[i] = new(big.Int).Mod(p3Coeffs[i], r.Modulus())
-	}
-
-	r.SetCoefficientsBigint(p3Coeffs, result)
-}
-
 // MatrixAdd adds two matrices of ring.Poly element-wise and stores the result in a given result matrix.
 func MatrixAdd(r *ring.Ring, M1, M2, result structs.Matrix[ring.Poly]) {
 	if M1 == nil || M2 == nil || len(M1) == 0 || len(M2) == 0 || len(M1) != len(M2) || len((M1)[0]) != len((M2)[0]) {
@@ -231,20 +133,16 @@ func MatrixAdd(r *ring.Ring, M1, M2, result structs.Matrix[ring.Poly]) {
 		return
 	}
 
-	m := len(M1)      // Number of rows
-	n := len((M1)[0]) // Number of columns
+	m := len(M1)
+	n := len(M1[0])
 
 	// Ensure the result matrix is initialized
 	for i := 0; i < m; i++ {
-		if (result)[i] == nil {
-			(result)[i] = make([]ring.Poly, n)
+		if result[i] == nil {
+			result[i] = make([]ring.Poly, n)
 		}
 		for j := 0; j < n; j++ {
-			// if (result)[i][j] == (ring.Poly{}) {
-			// 	newPoly := r.NewPoly()
-			// 	(result)[i][j] = newPoly
-			// }
-			r.Add((M1)[i][j], (M2)[i][j], (result)[i][j])
+			r.Add(M1[i][j], M2[i][j], result[i][j])
 		}
 	}
 }
@@ -252,12 +150,6 @@ func MatrixAdd(r *ring.Ring, M1, M2, result structs.Matrix[ring.Poly]) {
 // VectorAdd adds two vectors of ring.Poly element-wise and stores the result in a result vector.
 func VectorAdd(r *ring.Ring, v1, v2, result structs.Vector[ring.Poly]) {
 	for i := range v1 {
-		// if result[i] == (ring.Poly{}) {
-		// 	newPoly := r.NewPoly()
-		// 	result[i] = newPoly
-		// }
-		fmt.Println("testing")
-
 		r.Add(v1[i], v2[i], result[i])
 	}
 }
@@ -265,77 +157,11 @@ func VectorAdd(r *ring.Ring, v1, v2, result structs.Vector[ring.Poly]) {
 // VectorSub subtracts two vectors of ring.Poly element-wise and stores the result in a result vector.
 func VectorSub(r *ring.Ring, v1, v2, result structs.Vector[ring.Poly]) {
 	for i := range v1 {
-		// if result[i] == (ring.Poly{}) {
-		// 	newPoly := r.NewPoly()
-		// 	result[i] = newPoly
-		// }
-
 		r.Sub(v1[i], v2[i], result[i])
 	}
 }
 
-// NAIVE MULTIPLICATIONS
-
-// MatrixVectorMul performs matrix-vector multiplication.
-// It takes a matrix of ring.Poly pointers, a vector of ring.Poly pointers, and outputs the result in a given result vector.
-func MatrixVectorMulNaive(r *ring.Ring, M structs.Matrix[ring.Poly], vec structs.Vector[ring.Poly], result structs.Vector[ring.Poly]) {
-	for i := range M {
-		result[i] = r.NewPoly()
-		for j := range (M)[i] {
-			temp := r.NewPoly()
-			MulPolyNaive(r, (M)[i][j], vec[j], temp)
-			r.Add(result[i], temp, result[i]) // Accumulate the result
-		}
-	}
-}
-
-// MatrixMatrixMul performs matrix-matrix multiplication.
-// It takes two matrices of ring.Poly pointers, M1 of dimensions m x p and M2 of dimensions p x n,
-// and outputs the result in a given result matrix of dimensions m x n.
-func MatrixMatrixMulNaive(r *ring.Ring, M1, M2 structs.Matrix[ring.Poly], result structs.Matrix[ring.Poly]) {
-	if M1 == nil || M2 == nil || len(M1) == 0 || len(M2) == 0 || len((M1)[0]) != len(M2) {
-		log.Fatalf("Matrix dimensions are not compatible for multiplication.")
-		return
-	}
-
-	m := len(M1)
-	p := len((M1)[0]) // Assuming all rows in M1 are of the same length
-	n := len((M2)[0]) // Assuming all rows in M2 are of the same length
-
-	// Initialize the result matrix with zeros
-	for i := 0; i < m; i++ {
-		result[i] = make([]ring.Poly, n)
-		for j := 0; j < n; j++ {
-			newPoly := r.NewPoly()
-			result[i][j] = newPoly
-		}
-	}
-
-	// Perform matrix multiplication
-	for i := 0; i < m; i++ {
-		for j := 0; j < n; j++ {
-			for k := 0; k < p; k++ {
-				temp := r.NewPoly()
-				MulPolyNaive(r, M1[i][k], M2[k][j], temp)
-				r.Add(result[i][j], temp, result[i][j])
-			}
-		}
-	}
-}
-
-// VectorPolyMulNaive performs element-wise multiplication of a vector by a polynomial.
-// It takes a vector of ring.Poly pointers, a single ring.Poly pointer, and outputs the result in a given result vector.
-func VectorPolyMulNaive(r *ring.Ring, vec structs.Vector[ring.Poly], poly ring.Poly, result structs.Vector[ring.Poly]) {
-	for i := range vec {
-		// if result[i] == (ring.Poly{}) {
-		// 	newPoly := r.NewPoly()
-		// 	result[i] = newPoly
-		// }
-		MulPolyNaive(r, vec[i], poly, result[i]) // Multiply each vector element by the polynomial
-	}
-}
-
-// SAMPLER FUNCTIONS
+// SAMPLER HELPERS
 
 // SamplePolyVector samples a vector of polynomials of a given length using the provided sampler.
 func SamplePolyVector(length int, sampler ring.Sampler) structs.Vector[ring.Poly] {
