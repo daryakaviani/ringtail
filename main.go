@@ -23,8 +23,8 @@ const (
 	d = 10 // Length of joint noise vector
 
 	p         = 2 ^ 30
-	t         = 64   // Active threshold
-	k         = 1024 // Total number of parties
+	t         = 2 // Active threshold
+	k         = 3 // Total number of parties
 	ell       = 1
 	beta      = 10
 	betaDelta = 100000000000
@@ -68,6 +68,8 @@ func NewParty(id int, r *ring.Ring, sampler *ring.UniformSampler) *Party {
 
 // main function orchestrates the threshold signature protocol
 func main() {
+	BenchmarkProtocol()
+
 	var setupDuration, genDuration, signRound1Duration, signRound2Duration, finalizeDuration, verifyDuration time.Duration
 
 	randomKey := make([]byte, keySize)
@@ -605,4 +607,134 @@ func (party *Party) PRNGKey() []byte {
 		log.Fatalf("Error reading hash: %v\n", err)
 	}
 	return skHash
+}
+
+const numRuns = 100
+
+// BenchmarkProtocol benchmarks the threshold signature protocol
+func BenchmarkProtocol() {
+	setupDurations := make([]time.Duration, numRuns)
+	genDurations := make([]time.Duration, numRuns)
+	signRound1Durations := make([]time.Duration, numRuns)
+	signRound2Durations := make([]time.Duration, numRuns)
+	finalizeDurations := make([]time.Duration, numRuns)
+	verifyDurations := make([]time.Duration, numRuns)
+	endToEndDurations := make([]time.Duration, numRuns)
+
+	for run := 0; run < numRuns; run++ {
+		startEndToEnd := time.Now()
+
+		var setupDuration, genDuration, signRound1Duration, signRound2Duration, finalizeDuration, verifyDuration time.Duration
+
+		randomKey := make([]byte, keySize)
+
+		r, _ := ring.NewRing(1<<logN, []uint64{q})
+
+		prng, _ := sampling.NewKeyedPRNG(randomKey)
+		uniformSampler := ring.NewUniformSampler(prng, r)
+		trustedDealerKey := randomKey
+
+		// SETUP phase
+		start := time.Now()
+		A := Setup(uniformSampler)
+		setupDuration = time.Since(start)
+
+		parties := make([]*Party, k)
+		for i := range parties {
+			parties[i] = NewParty(i, r, uniformSampler)
+		}
+
+		// GEN: Generate secret shares and seeds
+		start = time.Now()
+		skShares, seeds, b := Gen(r, A, uniformSampler, trustedDealerKey)
+		genDuration = time.Since(start)
+
+		for partyID := 0; partyID < k; partyID++ {
+			parties[partyID].SkShare = skShares[partyID]
+			parties[partyID].Seed = seeds[partyID]
+		}
+
+		// SIGNATURE ROUND 1
+		mu := "Hello, Threshold Signature!"
+		sid := 1
+		PRFKey := "PRF Key"
+		T := []int{0, 1} // Active parties
+		lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
+		D := make(map[int]structs.Matrix[ring.Poly])
+		masks := make(map[int]structs.Vector[ring.Poly])
+
+		// Measure time for the first party in T
+		singlePartyStart := time.Now()
+		firstPartyID := T[0]
+		parties[firstPartyID].Lambda = lagrangeCoeffs[firstPartyID]
+		parties[firstPartyID].Seed = seeds[firstPartyID]
+		D[firstPartyID], masks[firstPartyID] = parties[firstPartyID].SignRound1(A, sid, []byte(PRFKey), T)
+		signRound1Duration = time.Since(singlePartyStart)
+
+		// Continue for other parties (not timed)
+		for _, partyID := range T[1:] {
+			parties[partyID].Lambda = lagrangeCoeffs[partyID]
+			parties[partyID].Seed = seeds[partyID]
+			D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, []byte(PRFKey), T)
+		}
+
+		// SIGNATURE ROUND 2
+		singlePartyStart = time.Now()
+		z := make(map[int]structs.Vector[ring.Poly])
+		z[firstPartyID] = parties[firstPartyID].SignRound2(A, b, D, masks, sid, mu, T, []byte(PRFKey), seeds)
+		signRound2Duration = time.Since(singlePartyStart)
+
+		// Continue for other parties (not timed)
+		for _, partyID := range T[1:] {
+			z[partyID] = parties[partyID].SignRound2(A, b, D, masks, sid, mu, T, []byte(PRFKey), seeds)
+		}
+
+		// SIGNATURE FINALIZE
+		start = time.Now()
+		finalParty := parties[0]
+		_, sig, Delta := finalParty.SignFinalize(z, masks, A, b)
+		finalizeDuration = time.Since(start)
+
+		// Verify the signature
+		start = time.Now()
+		valid := Verify(r, sig, A, mu, b, finalParty.C, Delta, betaDelta)
+		verifyDuration = time.Since(start)
+		fmt.Printf("Run %d: Signature Verification Result: %v\n", run+1, valid)
+
+		// Store durations
+		setupDurations[run] = setupDuration
+		genDurations[run] = genDuration
+		signRound1Durations[run] = signRound1Duration
+		signRound2Durations[run] = signRound2Duration
+		finalizeDurations[run] = finalizeDuration
+		verifyDurations[run] = verifyDuration
+		endToEndDurations[run] = time.Since(startEndToEnd)
+	}
+
+	// Compute averages
+	avgSetupDuration := averageDuration(setupDurations)
+	avgGenDuration := averageDuration(genDurations)
+	avgSignRound1Duration := averageDuration(signRound1Durations)
+	avgSignRound2Duration := averageDuration(signRound2Durations)
+	avgFinalizeDuration := averageDuration(finalizeDurations)
+	avgVerifyDuration := averageDuration(verifyDurations)
+	avgEndToEndDuration := averageDuration(endToEndDurations)
+
+	// Print averaged results
+	fmt.Println("\nBenchmark Results (averaged over 100 runs):")
+	fmt.Printf("Setup duration: %v\n", avgSetupDuration)
+	fmt.Printf("Gen duration: %v\n", avgGenDuration)
+	fmt.Printf("Signature Round 1 duration (single party): %v\n", avgSignRound1Duration)
+	fmt.Printf("Signature Round 2 duration (single party): %v\n", avgSignRound2Duration)
+	fmt.Printf("Finalize duration: %v\n", avgFinalizeDuration)
+	fmt.Printf("Verify duration: %v\n", avgVerifyDuration)
+	fmt.Printf("End-to-end duration: %v\n", avgEndToEndDuration)
+}
+
+func averageDuration(durations []time.Duration) time.Duration {
+	var total time.Duration
+	for _, duration := range durations {
+		total += duration
+	}
+	return total / time.Duration(len(durations))
 }
