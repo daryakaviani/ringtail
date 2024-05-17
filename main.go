@@ -23,8 +23,8 @@ const (
 	d = 10 // Length of joint noise vector
 
 	p         = 2 ^ 30
-	t         = 2 // Active threshold
-	k         = 3 // Total number of parties
+	t         = 64   // Active threshold
+	k         = 1024 // Total number of parties
 	ell       = 1
 	beta      = 10
 	betaDelta = 100000000000
@@ -388,12 +388,10 @@ func H_u(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly],
 	hasher := sha3.NewShake128()
 	buf := new(bytes.Buffer)
 
-	// Write the matrix A to the buffer
 	if _, err := A.WriteTo(buf); err != nil {
 		log.Fatalf("Error writing matrix A: %v\n", err)
 	}
 
-	// Write the vector b to the buffer
 	if _, err := b.WriteTo(buf); err != nil {
 		log.Fatalf("Error writing vector b: %v\n", err)
 	}
