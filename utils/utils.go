@@ -136,7 +136,6 @@ func MatrixAdd(r *ring.Ring, M1, M2, result structs.Matrix[ring.Poly]) {
 	m := len(M1)
 	n := len(M1[0])
 
-	// Ensure the result matrix is initialized
 	for i := 0; i < m; i++ {
 		if result[i] == nil {
 			result[i] = make([]ring.Poly, n)
@@ -249,7 +248,7 @@ func ConvertVectorFromNTT(r *ring.Ring, vec structs.Vector[ring.Poly]) {
 func InitializeVector(r *ring.Ring, length int) structs.Vector[ring.Poly] {
 	vector := make(structs.Vector[ring.Poly], length)
 	for i := range vector {
-		vector[i] = r.NewPoly() // Ensure each element is properly initialized
+		vector[i] = r.NewPoly()
 	}
 	return vector
 }
@@ -260,7 +259,7 @@ func InitializeMatrix(r *ring.Ring, rows, cols int) structs.Matrix[ring.Poly] {
 	for i := range matrix {
 		matrix[i] = make([]ring.Poly, cols)
 		for j := range matrix[i] {
-			matrix[i][j] = r.NewPoly() // Ensure each element is properly initialized
+			matrix[i][j] = r.NewPoly()
 		}
 	}
 	return matrix
