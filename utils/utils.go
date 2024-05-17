@@ -242,3 +242,26 @@ func ConvertVectorFromNTT(r *ring.Ring, vec structs.Vector[ring.Poly]) {
 		r.INTT(vec[i], vec[i])
 	}
 }
+
+// INITIALIZE HELPERS
+
+// InitializeVector creates and returns a vector of the given length, initializing each element as a new polynomial.
+func InitializeVector(r *ring.Ring, length int) structs.Vector[ring.Poly] {
+	vector := make(structs.Vector[ring.Poly], length)
+	for i := range vector {
+		vector[i] = r.NewPoly() // Ensure each element is properly initialized
+	}
+	return vector
+}
+
+// InitializeMatrix creates and returns a matrix of the given dimensions, initializing each element as a new polynomial.
+func InitializeMatrix(r *ring.Ring, rows, cols int) structs.Matrix[ring.Poly] {
+	matrix := make(structs.Matrix[ring.Poly], rows)
+	for i := range matrix {
+		matrix[i] = make([]ring.Poly, cols)
+		for j := range matrix[i] {
+			matrix[i][j] = r.NewPoly() // Ensure each element is properly initialized
+		}
+	}
+	return matrix
+}
