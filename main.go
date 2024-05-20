@@ -251,7 +251,7 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 		oneSlice := structs.Vector[ring.Poly]{onePoly}
 		u[j] = oneSlice
 		if d > 1 {
-			u_j := H_u(r, A, b, sid, j, D, mu, masks)
+			u_j := H_u(r, A, b, sid, T, j, D, mu, masks)
 			u[j] = append(oneSlice, u_j...)
 		}
 	}
@@ -386,7 +386,7 @@ func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta 
 // HASHES & PRF
 
 // H_u hashes parameters to a Gaussian distribution
-func H_u(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], sid int, j int, D map[int]structs.Matrix[ring.Poly], mu string, masks map[int]structs.Vector[ring.Poly]) structs.Vector[ring.Poly] {
+func H_u(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], sid int, T []int, j int, D map[int]structs.Matrix[ring.Poly], mu string, masks map[int]structs.Vector[ring.Poly]) structs.Vector[ring.Poly] {
 	hasher := sha3.NewShake128()
 	buf := new(bytes.Buffer)
 
@@ -399,6 +399,7 @@ func H_u(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly],
 	}
 
 	binary.Write(buf, binary.BigEndian, int64(sid))
+	binary.Write(buf, binary.BigEndian, T)
 	binary.Write(buf, binary.BigEndian, int64(j))
 
 	for _, D_h := range D {
