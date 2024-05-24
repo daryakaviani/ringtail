@@ -8,6 +8,7 @@ import (
 	"lattice-threshold-signature/utils"
 	"log"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/tuneinsight/lattigo/v5/ring"
@@ -18,27 +19,29 @@ import (
 
 // PARAMETERS
 const (
-	m = 11
-	n = 9
-	d = 10 // Length of joint noise vector
-
-	p         = 2 ^ 30
+	m         = 10
+	n         = 9
+	d         = 91
+	dbar      = d - 1
+	p         = 1 << 30
 	t         = 2 // Active threshold
 	k         = 3 // Total number of parties
-	ell       = 1
-	beta      = 10
-	betaDelta = 100000000000
+	ell       = 5
+	B         = 655327113807872.217683738776675 // 2^49.219208552119575
 	kappa     = 23
 	logN      = 8
-	bound_e   = 1000
-	sigma_e   = 32
-	boundE    = 1000
-	sigmaE    = 32
-	boundStar = 24296004000 * 2
-	sigmaStar = 24296004000
-	boundU    = 0
-	sigmaU    = 0
+	sigma_e   = 3.6649122421707636
+	bound_e   = sigma_e * 2
+	sigmaE    = sigma_e
+	boundE    = sigmaE * 2
+	sigmaStar = 1022622718524.366463783348896 // 2^39.8954111209675
+	boundStar = sigmaStar * 2
+	sigmaU    = 3808175.1950851358
+	boundU    = sigmaU * 2
 	keySize   = 30
+	q         = 0x8000000001c01
+	betaDelta = ((B * p) - q) / (2 * q)
+	qBits     = 51
 )
 
 // Party struct holds all state and methods for a party in the protocol
@@ -55,7 +58,7 @@ type Party struct {
 	Lambda         ring.Poly
 }
 
-var q = ring.Qi60[0]
+// var q = ring.Qi60[0]
 
 // NewParty initializes a new Party instance
 func NewParty(id int, r *ring.Ring, sampler *ring.UniformSampler) *Party {
@@ -68,13 +71,22 @@ func NewParty(id int, r *ring.Ring, sampler *ring.UniformSampler) *Party {
 
 // main function orchestrates the threshold signature protocol
 func main() {
-	BenchmarkProtocol()
+	// BenchmarkProtocol()
 
 	var setupDuration, genDuration, signRound1Duration, signRound2Duration, finalizeDuration, verifyDuration time.Duration
 
 	randomKey := make([]byte, keySize)
 
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
+
+	// friendlyPrime := ring.NewNTTFriendlyPrimesGenerator(qBits, r.NthRoot())
+	// for i := 0; i < 25; i++ {
+	// 	prime, _ := friendlyPrime.NextUpstreamPrime()
+	// 	fmt.Println("prime", prime)
+	// }
+
+	// prime, _ := friendlyPrime.NextUpstreamPrime()
+	// fmt.Println("prime", prime)
 
 	prng, _ := sampling.NewKeyedPRNG(randomKey)
 	uniformSampler := ring.NewUniformSampler(prng, r)
@@ -101,7 +113,7 @@ func main() {
 	}
 
 	// SIGNATURE ROUND 1
-	mu := "Hello, Threshold Signature!"
+	mu := "Message"
 	sid := 1
 	PRFKey := "PRF Key"
 	T := []int{0, 1} // Active parties
@@ -209,12 +221,12 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 	e_star := utils.SamplePolyVector(m, gaussianSampler)
 
 	// Initialize R_i
-	R_i := utils.SamplePolyMatrix(n, d-1, uniformSampler)
+	R_i := utils.SamplePolyMatrix(n, dbar, uniformSampler)
 
 	// Initialize E_i
 	gaussianParams = ring.DiscreteGaussian{Sigma: sigmaE, Bound: boundE}
 	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, false)
-	E_i := utils.SamplePolyMatrix(m, d-1, gaussianSampler)
+	E_i := utils.SamplePolyMatrix(m, dbar, gaussianSampler)
 
 	// Ensure concatenatedR is properly initialized
 	concatenatedR := utils.InitializeMatrix(r, n, d)
@@ -332,7 +344,7 @@ func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[
 }
 
 // Verify verifies the correctness of the signature
-func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], mu string, b structs.Vector[ring.Poly], c ring.Poly, Delta structs.Vector[ring.Poly], betaDelta uint64) bool {
+func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], mu string, b structs.Vector[ring.Poly], c ring.Poly, Delta structs.Vector[ring.Poly], betaDelta float64) bool {
 	Az := utils.InitializeVector(r, m)
 	utils.MatrixVectorMul(r, A, z, Az)
 
@@ -358,7 +370,7 @@ func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Pol
 }
 
 // CheckInfinityNorm checks if the infinity norm of the vector of polynomial Delta is less than or equal to betaDelta
-func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta uint64) bool {
+func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta float64) bool {
 	maxValue := big.NewInt(0)
 
 	for _, poly := range Delta {
@@ -376,11 +388,13 @@ func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta 
 		}
 	}
 
-	betaDeltaBig := new(big.Int).SetUint64(betaDelta)
-
 	log.Print("DELTA NORM:", maxValue)
 
-	return new(big.Int).Mod(maxValue, new(big.Int).SetUint64(q)).Cmp(betaDeltaBig) <= 0
+	betaDeltaStr := strconv.FormatFloat(betaDelta, 'f', 0, 64)
+	betaDeltaBigInt := new(big.Int)
+	betaDeltaBigInt, _ = betaDeltaBigInt.SetString(betaDeltaStr, 10)
+
+	return new(big.Int).Mod(maxValue, new(big.Int).SetUint64(q)).Cmp(betaDeltaBigInt) <= 0
 }
 
 // HASHES & PRF
@@ -432,7 +446,7 @@ func H_u(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly],
 	gaussianParams := ring.DiscreteGaussian{}
 	hashGaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
-	u_j := utils.SamplePolyVector(d-1, hashGaussianSampler)
+	u_j := utils.SamplePolyVector(dbar, hashGaussianSampler)
 
 	return u_j
 }
@@ -558,12 +572,10 @@ func ShamirSecretSharing(r *ring.Ring, s structs.Vector[ring.Poly], t, k int) ma
 // ComputeLagrangeCoefficients computes the Lagrange coefficients for interpolation based on the indices of available shares.
 func ComputeLagrangeCoefficients(r *ring.Ring, T []int, modulus *big.Int) map[int]ring.Poly {
 	lagrangeCoefficients := make(map[int]ring.Poly)
-
 	for i := 0; i < len(T); i++ {
 		xi := big.NewInt(int64(T[i] + 1))
 		numerator := big.NewInt(1)
 		denominator := big.NewInt(1)
-
 		for j := 0; j < len(T); j++ {
 			if i != j {
 				xj := big.NewInt(int64(T[j] + 1))
@@ -574,16 +586,13 @@ func ComputeLagrangeCoefficients(r *ring.Ring, T []int, modulus *big.Int) map[in
 				denominator.Mod(denominator, modulus)
 			}
 		}
-
 		denomInv := new(big.Int).ModInverse(denominator, modulus)
 		coeff := new(big.Int).Mul(numerator, denomInv)
 		coeff.Mod(coeff, modulus)
-
 		lagrangePoly := r.NewPoly()
 		r.SetCoefficientsBigint([]*big.Int{coeff}, lagrangePoly)
 		lagrangeCoefficients[T[i]] = lagrangePoly
 	}
-
 	return lagrangeCoefficients
 }
 
@@ -629,7 +638,7 @@ func BenchmarkProtocol() {
 
 		randomKey := make([]byte, keySize)
 
-		r, _ := ring.NewRing(1<<logN, []uint64{q})
+		r, _ := ring.NewRing(1<<logN, []uint64{0x7ffffffff5001, 0x3ffffffffc001})
 
 		prng, _ := sampling.NewKeyedPRNG(randomKey)
 		uniformSampler := ring.NewUniformSampler(prng, r)
