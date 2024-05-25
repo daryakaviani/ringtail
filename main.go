@@ -18,9 +18,9 @@ import (
 
 // PARAMETERS
 const (
-	m         = 1 // TESTING WITH SMALL PARAMS, TODO: UPDATE
-	n         = 1 // TESTING WITH SMALL PARAMS, TODO: UPDATE
-	d         = 1 // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	m         = 10 // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	n         = 9  // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	d         = 91 // TESTING WITH SMALL PARAMS, TODO: UPDATE
 	dbar      = d - 1
 	p         = 1 << 30
 	t         = 1 // Active threshold, TESTING WITH SMALL PARAMS, TODO: UPDATE

@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"log"
+	"math/big"
 	"strings"
 
 	"github.com/tuneinsight/lattigo/v5/ring"
@@ -10,28 +11,50 @@ import (
 )
 
 // RoundCoeffsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
-// and updates the polynomial using the SetCoefficientsBigint method.
 func RoundCoeffsToNearestMultiple(r *ring.Ring, poly ring.Poly, p, q uint64) {
-	for i := range poly.Coeffs {
-		for j := range poly.Coeffs[i] {
-			coeff := int64(poly.Coeffs[i][j])
-			qHalf := int64(q / 2)
+	qBig := new(big.Int).SetUint64(q)
+	halfQ := new(big.Int).Div(qBig, big.NewInt(2))
+	coeffsBigint := make([]*big.Int, r.N())
+	roundedCoeffs := make([]*big.Int, r.N())
 
-			// Convert to signed representation
-			if coeff > qHalf {
-				coeff -= int64(q)
+	r.PolyToBigint(poly, 1, coeffsBigint)
+
+	for i, coeff := range coeffsBigint {
+		if roundedCoeffs[i] == nil {
+			roundedCoeffs[i] = new(big.Int)
+		}
+
+		// Convert to signed representation
+		if coeff.Cmp(halfQ) > 0 {
+			coeff.Sub(coeff, qBig)
+		}
+
+		// Scale the coefficient
+		scaledCoeff := new(big.Float).Quo(new(big.Float).SetInt(coeff), new(big.Float).SetUint64(q))
+		scaledCoeff.Mul(scaledCoeff, new(big.Float).SetUint64(p))
+
+		// Round to the nearest integer
+		roundedCoeff, _ := scaledCoeff.Int(nil)
+		if scaledCoeff.Sign() >= 0 {
+			scaledCoeff.Sub(scaledCoeff, new(big.Float).SetInt(roundedCoeff))
+			if scaledCoeff.Cmp(new(big.Float).SetFloat64(0.5)) >= 0 {
+				roundedCoeff.Add(roundedCoeff, big.NewInt(1))
 			}
+		} else {
+			scaledCoeff.Sub(scaledCoeff, new(big.Float).SetInt(roundedCoeff))
+			if scaledCoeff.Cmp(new(big.Float).SetFloat64(-0.5)) <= 0 {
+				roundedCoeff.Sub(roundedCoeff, big.NewInt(1))
+			}
+		}
 
-			// Scale the coefficient
-			scaledCoeff := float64(coeff) * float64(p) / float64(q)
-
-			// Round to the nearest integer
-			roundedCoeff := int64(scaledCoeff + 0.5)
-
-			// Map back to Z_q
-			poly.Coeffs[i][j] = uint64((roundedCoeff + int64(q)) % int64(q))
+		// Map back to Z_q
+		roundedCoeffs[i].Mod(roundedCoeff, qBig)
+		if roundedCoeffs[i].Cmp(big.NewInt(0)) < 0 {
+			roundedCoeffs[i].Add(roundedCoeffs[i], qBig)
 		}
 	}
+
+	r.SetCoefficientsBigint(roundedCoeffs, poly)
 }
 
 // MatrixVectorMul performs matrix-vector multiplication.
