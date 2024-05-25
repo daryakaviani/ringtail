@@ -8,8 +8,6 @@ import (
 	"github.com/tuneinsight/lattigo/v5/utils/structs"
 )
 
-const logN = 8
-
 // RoundPolyCoefficientsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
 // and updates the polynomial using the SetCoefficientsBigint method.
 func RoundCoeffsToNearestMultiple(r *ring.Ring, poly ring.Poly, p uint64) {

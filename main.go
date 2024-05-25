@@ -8,7 +8,6 @@ import (
 	"lattice-threshold-signature/utils"
 	"log"
 	"math/big"
-	"strconv"
 	"time"
 
 	"github.com/tuneinsight/lattigo/v5/ring"
@@ -40,8 +39,8 @@ const (
 	boundU    = sigmaU * 2
 	keySize   = 30
 	q         = 0x8000000001c01
-	betaDelta = ((B * p) - q) / (2 * q)
-	qBits     = 51
+	// betaDelta = ((B * p) - q) / (2 * q)
+	// qBits = 51
 )
 
 // Party struct holds all state and methods for a party in the protocol
@@ -87,6 +86,8 @@ func main() {
 
 	// prime, _ := friendlyPrime.NextUpstreamPrime()
 	// fmt.Println("prime", prime)
+
+	// fmt.Println("betaDelta", betaDelta)
 
 	prng, _ := sampling.NewKeyedPRNG(randomKey)
 	uniformSampler := ring.NewUniformSampler(prng, r)
@@ -143,6 +144,7 @@ func main() {
 	finalizeDuration = time.Since(start)
 
 	// Verify the signature
+	betaDelta := calculateBetaDelta()
 	start = time.Now()
 	valid := Verify(r, sig, A, mu, b, finalParty.C, Delta, betaDelta)
 	verifyDuration = time.Since(start)
@@ -240,6 +242,8 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 	for i := range concatenatedE {
 		concatenatedE[i] = append([]ring.Poly{e_star[i]}, E_i[i]...)
 	}
+
+	// utils.PrintMatrix("Try:", concatenatedE)
 
 	D := utils.InitializeMatrix(r, m, n)
 	utils.MatrixMatrixMul(r, A, concatenatedR, D)
@@ -344,7 +348,7 @@ func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[
 }
 
 // Verify verifies the correctness of the signature
-func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], mu string, b structs.Vector[ring.Poly], c ring.Poly, Delta structs.Vector[ring.Poly], betaDelta float64) bool {
+func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], mu string, b structs.Vector[ring.Poly], c ring.Poly, Delta structs.Vector[ring.Poly], betaDelta *big.Int) bool {
 	Az := utils.InitializeVector(r, m)
 	utils.MatrixVectorMul(r, A, z, Az)
 
@@ -370,31 +374,54 @@ func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Pol
 }
 
 // CheckInfinityNorm checks if the infinity norm of the vector of polynomial Delta is less than or equal to betaDelta
-func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta float64) bool {
+func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta *big.Int) bool {
 	maxValue := big.NewInt(0)
+	qBigInt := big.NewInt(int64(q))
 
 	for _, poly := range Delta {
 		coeffsBigint := make([]*big.Int, r.N())
 		for i := range coeffsBigint {
 			coeffsBigint[i] = big.NewInt(0)
 		}
-		r.PolyToBigintCentered(poly, 1, coeffsBigint)
+		r.PolyToBigint(poly, 1, coeffsBigint)
 
 		for _, coeff := range coeffsBigint {
-			absCoeff := new(big.Int).Abs(coeff)
-			if absCoeff.Cmp(maxValue) == 1 {
-				maxValue.Set(absCoeff)
+			// Compute the infinity norm component as the minimum between the coefficient and (q - coefficient)
+			temp := new(big.Int).Sub(qBigInt, coeff)
+			infinityNormComponent := new(big.Int).Set(coeff)
+			if temp.Cmp(coeff) < 0 {
+				infinityNormComponent = temp
+			}
+			// Update maxValue if the current infinity norm component is greater
+			if infinityNormComponent.Cmp(maxValue) > 0 {
+				maxValue = infinityNormComponent
 			}
 		}
 	}
 
-	log.Print("DELTA NORM:", maxValue)
+	log.Println("Delta Norm:", maxValue)
+	log.Println("Beta Delta:", betaDelta)
 
-	betaDeltaStr := strconv.FormatFloat(betaDelta, 'f', 0, 64)
-	betaDeltaBigInt := new(big.Int)
-	betaDeltaBigInt, _ = betaDeltaBigInt.SetString(betaDeltaStr, 10)
+	return maxValue.Cmp(betaDelta) <= 0
+}
 
-	return new(big.Int).Mod(maxValue, new(big.Int).SetUint64(q)).Cmp(betaDeltaBigInt) <= 0
+// calculateBetaDelta computes ((B * p) - q) / (2 * q) as a big.Int
+func calculateBetaDelta() *big.Int {
+	// Convert constants to big.Int
+	pInt := new(big.Int).SetUint64(p)
+	BInt := new(big.Int)
+	BInt.SetString(fmt.Sprintf("%.0f", B), 10) // Convert float64 to string, then to big.Int
+	qInt := new(big.Int).SetUint64(q)
+
+	// B * p
+	Bp := new(big.Int).Mul(BInt, pInt)
+	// B * p - q
+	BpSubQ := new(big.Int).Sub(Bp, qInt)
+	// 2 * q
+	twoQ := new(big.Int).Mul(big.NewInt(2), qInt)
+	// ((B * p) - q) / (2 * q)
+	betaDelta := new(big.Int).Div(BpSubQ, twoQ)
+	return betaDelta
 }
 
 // HASHES & PRF
@@ -541,7 +568,7 @@ func ShamirSecretSharing(r *ring.Ring, s structs.Vector[ring.Poly], t, k int) ma
 			polyCoeffs := make([]*big.Int, t)
 			polyCoeffs[0] = secret
 			for i := 1; i < t; i++ {
-				randomCoeff := big.NewInt(20)
+				randomCoeff := big.NewInt(15) //make it random
 				polyCoeffs[i] = randomCoeff
 			}
 
@@ -617,134 +644,4 @@ func (party *Party) PRNGKey() []byte {
 		log.Fatalf("Error reading hash: %v\n", err)
 	}
 	return skHash
-}
-
-const numRuns = 100
-
-// BenchmarkProtocol benchmarks the threshold signature protocol
-func BenchmarkProtocol() {
-	setupDurations := make([]time.Duration, numRuns)
-	genDurations := make([]time.Duration, numRuns)
-	signRound1Durations := make([]time.Duration, numRuns)
-	signRound2Durations := make([]time.Duration, numRuns)
-	finalizeDurations := make([]time.Duration, numRuns)
-	verifyDurations := make([]time.Duration, numRuns)
-	endToEndDurations := make([]time.Duration, numRuns)
-
-	for run := 0; run < numRuns; run++ {
-		startEndToEnd := time.Now()
-
-		var setupDuration, genDuration, signRound1Duration, signRound2Duration, finalizeDuration, verifyDuration time.Duration
-
-		randomKey := make([]byte, keySize)
-
-		r, _ := ring.NewRing(1<<logN, []uint64{0x7ffffffff5001, 0x3ffffffffc001})
-
-		prng, _ := sampling.NewKeyedPRNG(randomKey)
-		uniformSampler := ring.NewUniformSampler(prng, r)
-		trustedDealerKey := randomKey
-
-		// SETUP phase
-		start := time.Now()
-		A := Setup(uniformSampler)
-		setupDuration = time.Since(start)
-
-		parties := make([]*Party, k)
-		for i := range parties {
-			parties[i] = NewParty(i, r, uniformSampler)
-		}
-
-		// GEN: Generate secret shares and seeds
-		start = time.Now()
-		skShares, seeds, b := Gen(r, A, uniformSampler, trustedDealerKey)
-		genDuration = time.Since(start)
-
-		for partyID := 0; partyID < k; partyID++ {
-			parties[partyID].SkShare = skShares[partyID]
-			parties[partyID].Seed = seeds[partyID]
-		}
-
-		// SIGNATURE ROUND 1
-		mu := "Hello, Threshold Signature!"
-		sid := 1
-		PRFKey := "PRF Key"
-		T := []int{0, 1} // Active parties
-		lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
-		D := make(map[int]structs.Matrix[ring.Poly])
-		masks := make(map[int]structs.Vector[ring.Poly])
-
-		// Measure time for the first party in T
-		singlePartyStart := time.Now()
-		firstPartyID := T[0]
-		parties[firstPartyID].Lambda = lagrangeCoeffs[firstPartyID]
-		parties[firstPartyID].Seed = seeds[firstPartyID]
-		D[firstPartyID], masks[firstPartyID] = parties[firstPartyID].SignRound1(A, sid, []byte(PRFKey), T)
-		signRound1Duration = time.Since(singlePartyStart)
-
-		// Continue for other parties (not timed)
-		for _, partyID := range T[1:] {
-			parties[partyID].Lambda = lagrangeCoeffs[partyID]
-			parties[partyID].Seed = seeds[partyID]
-			D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, []byte(PRFKey), T)
-		}
-
-		// SIGNATURE ROUND 2
-		singlePartyStart = time.Now()
-		z := make(map[int]structs.Vector[ring.Poly])
-		z[firstPartyID] = parties[firstPartyID].SignRound2(A, b, D, masks, sid, mu, T, []byte(PRFKey), seeds)
-		signRound2Duration = time.Since(singlePartyStart)
-
-		// Continue for other parties (not timed)
-		for _, partyID := range T[1:] {
-			z[partyID] = parties[partyID].SignRound2(A, b, D, masks, sid, mu, T, []byte(PRFKey), seeds)
-		}
-
-		// SIGNATURE FINALIZE
-		start = time.Now()
-		finalParty := parties[0]
-		_, sig, Delta := finalParty.SignFinalize(z, masks, A, b)
-		finalizeDuration = time.Since(start)
-
-		// Verify the signature
-		start = time.Now()
-		valid := Verify(r, sig, A, mu, b, finalParty.C, Delta, betaDelta)
-		verifyDuration = time.Since(start)
-		fmt.Printf("Run %d: Signature Verification Result: %v\n", run+1, valid)
-
-		// Store durations
-		setupDurations[run] = setupDuration
-		genDurations[run] = genDuration
-		signRound1Durations[run] = signRound1Duration
-		signRound2Durations[run] = signRound2Duration
-		finalizeDurations[run] = finalizeDuration
-		verifyDurations[run] = verifyDuration
-		endToEndDurations[run] = time.Since(startEndToEnd)
-	}
-
-	// Compute averages
-	avgSetupDuration := averageDuration(setupDurations)
-	avgGenDuration := averageDuration(genDurations)
-	avgSignRound1Duration := averageDuration(signRound1Durations)
-	avgSignRound2Duration := averageDuration(signRound2Durations)
-	avgFinalizeDuration := averageDuration(finalizeDurations)
-	avgVerifyDuration := averageDuration(verifyDurations)
-	avgEndToEndDuration := averageDuration(endToEndDurations)
-
-	// Print averaged results
-	fmt.Println("\nBenchmark Results (averaged over 100 runs):")
-	fmt.Printf("Setup duration: %v\n", avgSetupDuration)
-	fmt.Printf("Gen duration: %v\n", avgGenDuration)
-	fmt.Printf("Signature Round 1 duration (single party): %v\n", avgSignRound1Duration)
-	fmt.Printf("Signature Round 2 duration (single party): %v\n", avgSignRound2Duration)
-	fmt.Printf("Finalize duration: %v\n", avgFinalizeDuration)
-	fmt.Printf("Verify duration: %v\n", avgVerifyDuration)
-	fmt.Printf("End-to-end duration: %v\n", avgEndToEndDuration)
-}
-
-func averageDuration(durations []time.Duration) time.Duration {
-	var total time.Duration
-	for _, duration := range durations {
-		total += duration
-	}
-	return total / time.Duration(len(durations))
 }
