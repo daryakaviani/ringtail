@@ -306,7 +306,7 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 	utils.PrintVector("H -- before rounding to the nearest multiple of p", h)
 
 	for _, poly := range h {
-		utils.RoundCoeffsToNearestMultiple(r, poly, p)
+		utils.RoundCoeffsToNearestMultiple(r, poly, p, q)
 	}
 	party.H = h
 
@@ -377,7 +377,7 @@ func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[
 	utils.PrintVector("Az-bc before rounding", Az_bc)
 
 	for _, poly := range Az_bc {
-		utils.RoundCoeffsToNearestMultiple(r, poly, p)
+		utils.RoundCoeffsToNearestMultiple(r, poly, p, q)
 	}
 	utils.PrintVector("Az-bc after rounding", Az_bc)
 
@@ -401,7 +401,7 @@ func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Pol
 	utils.VectorSub(r, Az, bc, Az_bc)
 
 	for _, poly := range Az_bc {
-		utils.RoundCoeffsToNearestMultiple(r, poly, p)
+		utils.RoundCoeffsToNearestMultiple(r, poly, p, q)
 	}
 
 	Az_bc_Delta := utils.InitializeVector(r, m)

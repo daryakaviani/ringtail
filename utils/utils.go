@@ -3,41 +3,35 @@ package utils
 import (
 	"fmt"
 	"log"
-	"math/big"
 	"strings"
 
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/structs"
 )
 
-// RoundPolyCoefficientsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
+// RoundCoeffsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
 // and updates the polynomial using the SetCoefficientsBigint method.
-func RoundCoeffsToNearestMultiple(r *ring.Ring, poly ring.Poly, p uint64) {
-	pBig := new(big.Int).SetUint64(p)
-	halfP := new(big.Int).Div(new(big.Int).SetUint64(p), big.NewInt(2)) // p/2 for rounding calculation
-	roundedCoeffs := make([]*big.Int, poly.N())
-	coeffsBigint := make([]*big.Int, poly.N())
-	r.PolyToBigint(poly, 1, coeffsBigint)
+func RoundCoeffsToNearestMultiple(r *ring.Ring, poly ring.Poly, p, q uint64) {
+	for i := range poly.Coeffs {
+		for j := range poly.Coeffs[i] {
+			coeff := int64(poly.Coeffs[i][j])
+			qHalf := int64(q / 2)
 
-	// Calculate rounded coefficients
-	for i, coeff := range coeffsBigint {
-		// Initialize if nil
-		if roundedCoeffs[i] == nil {
-			roundedCoeffs[i] = new(big.Int)
-		}
+			// Convert to signed representation
+			if coeff > qHalf {
+				coeff -= int64(q)
+			}
 
-		// Perform rounding
-		mod := new(big.Int).Mod(coeff, pBig)
-		if mod.Cmp(halfP) > 0 {
-			coeff.Add(coeff, pBig)
-			coeff.Sub(coeff, mod)
-		} else {
-			coeff.Sub(coeff, mod)
+			// Scale the coefficient
+			scaledCoeff := float64(coeff) * float64(p) / float64(q)
+
+			// Round to the nearest integer
+			roundedCoeff := int64(scaledCoeff + 0.5)
+
+			// Map back to Z_q
+			poly.Coeffs[i][j] = uint64((roundedCoeff + int64(q)) % int64(q))
 		}
-		roundedCoeffs[i].Set(coeff)
 	}
-
-	r.SetCoefficientsBigint(roundedCoeffs, poly)
 }
 
 // MatrixVectorMul performs matrix-vector multiplication.
