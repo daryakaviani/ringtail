@@ -272,3 +272,21 @@ func InitializeMatrix(r *ring.Ring, rows, cols int) structs.Matrix[ring.Poly] {
 	}
 	return matrix
 }
+
+// Copy map helpers
+
+func CopyMatrixMap(original map[int]structs.Matrix[ring.Poly]) map[int]structs.Matrix[ring.Poly] {
+	copy := make(map[int]structs.Matrix[ring.Poly])
+	for key, value := range original {
+		copy[key] = value
+	}
+	return copy
+}
+
+func CopyVectorMap(original map[int]structs.Vector[ring.Poly]) map[int]structs.Vector[ring.Poly] {
+	copy := make(map[int]structs.Vector[ring.Poly])
+	for key, value := range original {
+		copy[key] = value
+	}
+	return copy
+}

@@ -53,6 +53,7 @@ type Party struct {
 	C              ring.Poly
 	H              structs.Vector[ring.Poly]
 	Lambda         ring.Poly
+	D              structs.Matrix[ring.Poly]
 }
 
 // NewParty initializes a new Party instance
@@ -121,7 +122,22 @@ func main() {
 	start = time.Now()
 	z := make(map[int]structs.Vector[ring.Poly])
 	for _, partyID := range T {
-		z[partyID] = parties[partyID].SignRound2(A, b, D, masks, sid, mu, T, []byte(PRFKey), seeds)
+
+		// Create new maps excluding the party's own D and mask
+		DExcludingParty := make(map[int]structs.Matrix[ring.Poly])
+		masksExcludingParty := make(map[int]structs.Vector[ring.Poly])
+		for key, value := range D {
+			if key != partyID {
+				DExcludingParty[key] = value
+			}
+		}
+		for key, value := range masks {
+			if key != partyID {
+				masksExcludingParty[key] = value
+			}
+		}
+
+		z[partyID] = parties[partyID].SignRound2(A, b, DExcludingParty, masksExcludingParty, sid, mu, T, []byte(PRFKey), seeds)
 		utils.PrintVector(fmt.Sprintf("Vector z for party %d:", partyID), z[partyID])
 	}
 	signRound2Duration = time.Since(start)
@@ -248,11 +264,14 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 	utils.PrintMatrix("Matrix D:", D)
 	utils.PrintVector("Mask vector:", mask)
 
+	party.Mask = mask
+	party.D = D
+
 	return D, mask
 }
 
 // SignRound2 performs the second round of signing
-func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], D map[int]structs.Matrix[ring.Poly], masks map[int]structs.Vector[ring.Poly], sid int, mu string, T []int, PRFKey []byte, seeds map[int][][]byte) structs.Vector[ring.Poly] {
+func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], DExcludingParty map[int]structs.Matrix[ring.Poly], masksExcludingParty map[int]structs.Vector[ring.Poly], sid int, mu string, T []int, PRFKey []byte, seeds map[int][][]byte) structs.Vector[ring.Poly] {
 	r := party.Ring
 	partyID := party.ID
 	concatR := party.R
@@ -261,6 +280,11 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 
 	u := make(map[int]structs.Vector[ring.Poly], d)
 	onePoly := r.NewMonomialXi(0)
+
+	D := utils.CopyMatrixMap(DExcludingParty)
+	D[partyID] = party.D
+	masks := utils.CopyVectorMap(masksExcludingParty)
+	masks[partyID] = party.Mask
 
 	for _, j := range T {
 		oneSlice := structs.Vector[ring.Poly]{onePoly}
