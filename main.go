@@ -18,8 +18,8 @@ import (
 
 // PARAMETERS
 const (
-	m         = 10 // TESTING WITH SMALL PARAMS, TODO: UPDATE
-	n         = 9  // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	m         = 7  // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	n         = 4  // TESTING WITH SMALL PARAMS, TODO: UPDATE
 	d         = 91 // TESTING WITH SMALL PARAMS, TODO: UPDATE
 	dbar      = d - 1
 	p         = 1 << 30
@@ -51,7 +51,7 @@ type Party struct {
 	Mask           structs.Vector[ring.Poly]
 	R              structs.Matrix[ring.Poly]
 	C              ring.Poly
-	H              structs.Vector[ring.Poly]
+	H              structs.Vector[[]*big.Int]
 	Lambda         ring.Poly
 	D              structs.Matrix[ring.Poly]
 }
@@ -303,16 +303,10 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 		utils.VectorAdd(r, h, D_j_u_j, h)
 	}
 
-	utils.PrintVector("H -- before rounding to the nearest multiple of p", h)
+	roundedH := utils.RoundCoeffsToNearestMultiple(r, h, p, q)
+	party.H = roundedH
 
-	for _, poly := range h {
-		utils.RoundCoeffsToNearestMultiple(r, poly, p, q)
-	}
-	party.H = h
-
-	utils.PrintVector("H -- after rounding to the nearest multiple of p", h)
-
-	c := H_c(r, A, b, h, mu)
+	c := H_c(r, A, b, roundedH, mu)
 	party.C = c
 
 	mPrime := utils.InitializeVector(r, n)
@@ -338,7 +332,7 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 }
 
 // SignFinalize finalizes the signature
-func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[int]structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly]) (ring.Poly, structs.Vector[ring.Poly], structs.Vector[ring.Poly]) {
+func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[int]structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly]) (ring.Poly, structs.Vector[ring.Poly], structs.Vector[[]*big.Int]) {
 	r := party.Ring
 	c := party.C
 	h := party.H
@@ -376,21 +370,24 @@ func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[
 
 	utils.PrintVector("Az-bc before rounding", Az_bc)
 
-	for _, poly := range Az_bc {
-		utils.RoundCoeffsToNearestMultiple(r, poly, p, q)
+	Az_bc_bigint := utils.RoundCoeffsToNearestMultiple(r, Az_bc, p, q)
+	utils.PrintBigIntVector("Az-bc after rounding", Az_bc_bigint)
+
+	Delta := make(structs.Vector[[]*big.Int], m)
+	for i := range Delta {
+		Delta[i] = make([]*big.Int, r.N())
+		for j := range Delta[i] {
+			Delta[i][j] = new(big.Int).Sub(h[i][j], Az_bc_bigint[i][j])
+		}
 	}
-	utils.PrintVector("Az-bc after rounding", Az_bc)
 
-	Delta := utils.InitializeVector(r, m)
-	utils.VectorSub(r, h, Az_bc, Delta)
-
-	utils.PrintVector("Vector Delta:", Delta)
+	utils.PrintBigIntVector("Vector Delta:", Delta)
 
 	return party.C, z_sum, Delta
 }
 
 // Verify verifies the correctness of the signature
-func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], mu string, b structs.Vector[ring.Poly], c ring.Poly, Delta structs.Vector[ring.Poly], betaDelta *big.Int) bool {
+func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Poly], mu string, b structs.Vector[ring.Poly], c ring.Poly, Delta structs.Vector[[]*big.Int], betaDelta *big.Int) bool {
 	Az := utils.InitializeVector(r, m)
 	utils.MatrixVectorMul(r, A, z, Az)
 
@@ -400,12 +397,17 @@ func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Pol
 	Az_bc := utils.InitializeVector(r, m)
 	utils.VectorSub(r, Az, bc, Az_bc)
 
-	for _, poly := range Az_bc {
-		utils.RoundCoeffsToNearestMultiple(r, poly, p, q)
+	Az_bc_bigint := utils.RoundCoeffsToNearestMultiple(r, Az_bc, p, q)
+
+	Az_bc_Delta := make(structs.Vector[[]*big.Int], m)
+	for i := range Az_bc_Delta {
+		Az_bc_Delta[i] = make([]*big.Int, r.N())
+		for j := range Az_bc_Delta[i] {
+			Az_bc_Delta[i][j] = new(big.Int).Add(Az_bc_bigint[i][j], Delta[i][j])
+		}
 	}
 
-	Az_bc_Delta := utils.InitializeVector(r, m)
-	utils.VectorAdd(r, Az_bc, Delta, Az_bc_Delta)
+	utils.PrintBigIntVector("Az_bc_Delta:", Az_bc_Delta)
 
 	computedC := H_c(r, A, b, Az_bc_Delta, mu)
 	if !r.Equal(c, computedC) {
@@ -415,28 +417,15 @@ func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Pol
 	return CheckInfinityNorm(r, Delta, betaDelta)
 }
 
-// CheckInfinityNorm checks if the infinity norm of the vector of polynomial Delta is less than or equal to betaDelta
-func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[ring.Poly], betaDelta *big.Int) bool {
+// CheckInfinityNorm checks if the infinity norm of the vector of *big.Int Delta is less than or equal to betaDelta
+func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[[]*big.Int], betaDelta *big.Int) bool {
 	maxValue := big.NewInt(0)
-	qBigInt := big.NewInt(int64(q))
 
-	for _, poly := range Delta {
-		coeffsBigint := make([]*big.Int, r.N())
-		for i := range coeffsBigint {
-			coeffsBigint[i] = big.NewInt(0)
-		}
-		r.PolyToBigint(poly, 1, coeffsBigint)
-
-		for _, coeff := range coeffsBigint {
-			// Compute the infinity norm component as the minimum between the coefficient and (q - coefficient)
-			temp := new(big.Int).Sub(qBigInt, coeff)
-			infinityNormComponent := new(big.Int).Set(coeff)
-			if temp.Cmp(coeff) < 0 {
-				infinityNormComponent = temp
-			}
-			// Update maxValue if the current infinity norm component is greater
-			if infinityNormComponent.Cmp(maxValue) > 0 {
-				maxValue = infinityNormComponent
+	for _, polyCoeffs := range Delta {
+		for _, coeff := range polyCoeffs {
+			absCoeff := new(big.Int).Abs(coeff)
+			if absCoeff.Cmp(maxValue) > 0 {
+				maxValue = absCoeff
 			}
 		}
 	}
@@ -548,7 +537,7 @@ func PRF(r *ring.Ring, sid int, sd_ij []byte, PRFKey []byte) structs.Vector[ring
 }
 
 // H_c hashes to low norm ring elements
-func H_c(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], h structs.Vector[ring.Poly], mu string) ring.Poly {
+func H_c(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], h structs.Vector[[]*big.Int], mu string) ring.Poly {
 	hasher := sha3.NewShake128()
 	buf := new(bytes.Buffer)
 
@@ -560,8 +549,10 @@ func H_c(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly],
 		log.Fatalf("Error writing vector b: %v\n", err)
 	}
 
-	if _, err := h.WriteTo(buf); err != nil {
-		log.Fatalf("Error writing vector h: %v\n", err)
+	for _, coeffs := range h {
+		for _, coeff := range coeffs {
+			binary.Write(buf, binary.BigEndian, coeff.Bytes())
+		}
 	}
 
 	binary.Write(buf, binary.BigEndian, []byte(mu))

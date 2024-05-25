@@ -10,51 +10,57 @@ import (
 	"github.com/tuneinsight/lattigo/v5/utils/structs"
 )
 
-// RoundCoeffsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p
-func RoundCoeffsToNearestMultiple(r *ring.Ring, poly ring.Poly, p, q uint64) {
-	qBig := new(big.Int).SetUint64(q)
-	halfQ := new(big.Int).Div(qBig, big.NewInt(2))
-	coeffsBigint := make([]*big.Int, r.N())
-	roundedCoeffs := make([]*big.Int, r.N())
+// RoundCoeffsToNearestMultiple rounds the coefficients of a polynomial to the nearest multiple of p and returns them as *big.Int in the range [-p/2, p/2]
+func RoundCoeffsToNearestMultiple(r *ring.Ring, polyVec structs.Vector[ring.Poly], p, q uint64) structs.Vector[[]*big.Int] {
+	bigIntVec := make(structs.Vector[[]*big.Int], len(polyVec))
 
-	r.PolyToBigint(poly, 1, coeffsBigint)
+	for i, poly := range polyVec {
+		qBig := new(big.Int).SetUint64(q)
+		halfQ := new(big.Int).Div(qBig, big.NewInt(2))
+		coeffsBigint := make([]*big.Int, r.N())
+		roundedCoeffs := make([]*big.Int, r.N())
 
-	for i, coeff := range coeffsBigint {
-		if roundedCoeffs[i] == nil {
-			roundedCoeffs[i] = new(big.Int)
-		}
+		r.PolyToBigint(poly, 1, coeffsBigint)
 
-		// Convert to signed representation
-		if coeff.Cmp(halfQ) > 0 {
-			coeff.Sub(coeff, qBig)
-		}
-
-		// Scale the coefficient
-		scaledCoeff := new(big.Float).Quo(new(big.Float).SetInt(coeff), new(big.Float).SetUint64(q))
-		scaledCoeff.Mul(scaledCoeff, new(big.Float).SetUint64(p))
-
-		// Round to the nearest integer
-		roundedCoeff, _ := scaledCoeff.Int(nil)
-		if scaledCoeff.Sign() >= 0 {
-			scaledCoeff.Sub(scaledCoeff, new(big.Float).SetInt(roundedCoeff))
-			if scaledCoeff.Cmp(new(big.Float).SetFloat64(0.5)) >= 0 {
-				roundedCoeff.Add(roundedCoeff, big.NewInt(1))
+		for i, coeff := range coeffsBigint {
+			if roundedCoeffs[i] == nil {
+				roundedCoeffs[i] = new(big.Int)
 			}
-		} else {
-			scaledCoeff.Sub(scaledCoeff, new(big.Float).SetInt(roundedCoeff))
-			if scaledCoeff.Cmp(new(big.Float).SetFloat64(-0.5)) <= 0 {
-				roundedCoeff.Sub(roundedCoeff, big.NewInt(1))
+
+			// Convert to signed representation
+			if coeff.Cmp(halfQ) > 0 {
+				coeff.Sub(coeff, qBig)
+			}
+
+			// Scale the coefficient
+			scaledCoeff := new(big.Float).Quo(new(big.Float).SetInt(coeff), new(big.Float).SetUint64(q))
+			scaledCoeff.Mul(scaledCoeff, new(big.Float).SetUint64(p))
+
+			// Round to the nearest integer
+			roundedCoeff, _ := scaledCoeff.Int(nil)
+			if scaledCoeff.Sign() >= 0 {
+				scaledCoeff.Sub(scaledCoeff, new(big.Float).SetInt(roundedCoeff))
+				if scaledCoeff.Cmp(new(big.Float).SetFloat64(0.5)) >= 0 {
+					roundedCoeff.Add(roundedCoeff, big.NewInt(1))
+				}
+			} else {
+				scaledCoeff.Sub(scaledCoeff, new(big.Float).SetInt(roundedCoeff))
+				if scaledCoeff.Cmp(new(big.Float).SetFloat64(-0.5)) <= 0 {
+					roundedCoeff.Sub(roundedCoeff, big.NewInt(1))
+				}
+			}
+
+			// Ensure the result is in the range [-p/2, p/2]
+			halfP := new(big.Int).Div(new(big.Int).SetUint64(p), big.NewInt(2))
+			roundedCoeffs[i] = roundedCoeff
+			if roundedCoeff.Cmp(halfP) > 0 {
+				roundedCoeffs[i].Sub(roundedCoeff, new(big.Int).SetUint64(p))
 			}
 		}
 
-		// Map back to Z_q
-		roundedCoeffs[i].Mod(roundedCoeff, qBig)
-		if roundedCoeffs[i].Cmp(big.NewInt(0)) < 0 {
-			roundedCoeffs[i].Add(roundedCoeffs[i], qBig)
-		}
+		bigIntVec[i] = roundedCoeffs
 	}
-
-	r.SetCoefficientsBigint(roundedCoeffs, poly)
+	return bigIntVec
 }
 
 // MatrixVectorMul performs matrix-vector multiplication.
@@ -306,4 +312,20 @@ func CopyVectorMap(original map[int]structs.Vector[ring.Poly]) map[int]structs.V
 		copy[key] = value
 	}
 	return copy
+}
+
+// PrintBigIntVector prints a vector of slices of *big.Int elements
+func PrintBigIntVector(label string, vector structs.Vector[[]*big.Int]) {
+	log.Println(label)
+	for i, slice := range vector {
+		log.Printf("[%d]: %s\n", i, FormatBigIntSlice(slice))
+	}
+}
+
+func FormatBigIntSlice(slice []*big.Int) string {
+	var sliceStr []string
+	for _, val := range slice {
+		sliceStr = append(sliceStr, val.String())
+	}
+	return strings.Join(sliceStr, ", ")
 }
