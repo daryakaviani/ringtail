@@ -18,13 +18,13 @@ import (
 
 // PARAMETERS
 const (
-	m         = 10
-	n         = 9
-	d         = 91
+	m         = 1 // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	n         = 1 // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	d         = 1 // TESTING WITH SMALL PARAMS, TODO: UPDATE
 	dbar      = d - 1
 	p         = 1 << 30
-	t         = 2 // Active threshold
-	k         = 3 // Total number of parties
+	t         = 1 // Active threshold, TESTING WITH SMALL PARAMS, TODO: UPDATE
+	k         = 1 // Total number of parties, TESTING WITH SMALL PARAMS, TODO: UPDATE
 	ell       = 5
 	B         = 655327113807872.217683738776675 // 2^49.219208552119575
 	kappa     = 23
@@ -38,9 +38,7 @@ const (
 	sigmaU    = 3808175.1950851358
 	boundU    = sigmaU * 2
 	keySize   = 30
-	q         = 0x8000000001c01
-	// betaDelta = ((B * p) - q) / (2 * q)
-	// qBits = 51
+	q         = 0x8000000001c01 // 51-bit NTT-friendly prime
 )
 
 // Party struct holds all state and methods for a party in the protocol
@@ -57,8 +55,6 @@ type Party struct {
 	Lambda         ring.Poly
 }
 
-// var q = ring.Qi60[0]
-
 // NewParty initializes a new Party instance
 func NewParty(id int, r *ring.Ring, sampler *ring.UniformSampler) *Party {
 	return &Party{
@@ -70,24 +66,11 @@ func NewParty(id int, r *ring.Ring, sampler *ring.UniformSampler) *Party {
 
 // main function orchestrates the threshold signature protocol
 func main() {
-	// BenchmarkProtocol()
-
 	var setupDuration, genDuration, signRound1Duration, signRound2Duration, finalizeDuration, verifyDuration time.Duration
 
 	randomKey := make([]byte, keySize)
 
 	r, _ := ring.NewRing(1<<logN, []uint64{q})
-
-	// friendlyPrime := ring.NewNTTFriendlyPrimesGenerator(qBits, r.NthRoot())
-	// for i := 0; i < 25; i++ {
-	// 	prime, _ := friendlyPrime.NextUpstreamPrime()
-	// 	fmt.Println("prime", prime)
-	// }
-
-	// prime, _ := friendlyPrime.NextUpstreamPrime()
-	// fmt.Println("prime", prime)
-
-	// fmt.Println("betaDelta", betaDelta)
 
 	prng, _ := sampling.NewKeyedPRNG(randomKey)
 	uniformSampler := ring.NewUniformSampler(prng, r)
@@ -96,6 +79,7 @@ func main() {
 	// SETUP phase
 	start := time.Now()
 	A := Setup(uniformSampler)
+	utils.PrintMatrix("Matrix A:", A)
 	setupDuration = time.Since(start)
 
 	parties := make([]*Party, k)
@@ -106,18 +90,20 @@ func main() {
 	// GEN: Generate secret shares and seeds
 	start = time.Now()
 	skShares, seeds, b := Gen(r, A, uniformSampler, trustedDealerKey)
+	utils.PrintVector("Vector b:", b)
 	genDuration = time.Since(start)
 
 	for partyID := 0; partyID < k; partyID++ {
 		parties[partyID].SkShare = skShares[partyID]
 		parties[partyID].Seed = seeds[partyID]
+		utils.PrintVector(fmt.Sprintf("Secret share for party %d:", partyID), skShares[partyID])
 	}
 
 	// SIGNATURE ROUND 1
 	mu := "Message"
 	sid := 1
-	PRFKey := "PRF Key"
-	T := []int{0, 1} // Active parties
+	PRFKey := "PRF Key" // PRF key with fixed randomness for testing, TODO: Update
+	T := []int{0}       // Active parties
 	start = time.Now()
 	lagrangeCoeffs := ComputeLagrangeCoefficients(r, T, big.NewInt(int64(q)))
 	D := make(map[int]structs.Matrix[ring.Poly])
@@ -126,6 +112,8 @@ func main() {
 		parties[partyID].Lambda = lagrangeCoeffs[partyID]
 		parties[partyID].Seed = seeds[partyID]
 		D[partyID], masks[partyID] = parties[partyID].SignRound1(A, sid, []byte(PRFKey), T)
+		utils.PrintMatrix(fmt.Sprintf("Matrix D for party %d:", partyID), D[partyID])
+		utils.PrintVector(fmt.Sprintf("Mask for party %d:", partyID), masks[partyID])
 	}
 	signRound1Duration = time.Since(start)
 
@@ -134,6 +122,7 @@ func main() {
 	z := make(map[int]structs.Vector[ring.Poly])
 	for _, partyID := range T {
 		z[partyID] = parties[partyID].SignRound2(A, b, D, masks, sid, mu, T, []byte(PRFKey), seeds)
+		utils.PrintVector(fmt.Sprintf("Vector z for party %d:", partyID), z[partyID])
 	}
 	signRound2Duration = time.Since(start)
 
@@ -161,7 +150,9 @@ func main() {
 
 // Setup generates the public parameters
 func Setup(uniformSampler *ring.UniformSampler) structs.Matrix[ring.Poly] {
-	return utils.SamplePolyMatrix(m, n, uniformSampler)
+	matrix := utils.SamplePolyMatrix(m, n, uniformSampler)
+	utils.PrintMatrix("Setup Matrix:", matrix)
+	return matrix
 }
 
 // Gen generates the secret shares, seeds, and the public parameter b
@@ -171,8 +162,10 @@ func Gen(r *ring.Ring, A structs.Matrix[ring.Poly], uniformSampler *ring.Uniform
 	gaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	s := utils.SamplePolyVector(n, uniformSampler)
+	utils.PrintVector("Secret Vector s:", s)
 	skShares := ShamirSecretSharing(r, s, t, k)
 	e := utils.SamplePolyVector(m, gaussianSampler)
+	utils.PrintVector("Error Vector e:", e)
 	b := utils.InitializeVector(r, m)
 	utils.MatrixVectorMul(r, A, s, b)
 	utils.VectorAdd(r, b, e, b)
@@ -245,9 +238,15 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 
 	// utils.PrintMatrix("Try:", concatenatedE)
 
+	utils.PrintMatrix("ConcatE", concatenatedE)
+	utils.PrintMatrix("ConcatR", concatenatedR)
+
 	D := utils.InitializeMatrix(r, m, n)
 	utils.MatrixMatrixMul(r, A, concatenatedR, D)
 	utils.MatrixAdd(r, concatenatedE, D, D)
+
+	utils.PrintMatrix("Matrix D:", D)
+	utils.PrintVector("Mask vector:", mask)
 
 	return D, mask
 }
@@ -280,10 +279,14 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 		utils.VectorAdd(r, h, D_j_u_j, h)
 	}
 
+	utils.PrintVector("H -- before rounding to the nearest multiple of p", h)
+
 	for _, poly := range h {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
 	party.H = h
+
+	utils.PrintVector("H -- after rounding to the nearest multiple of p", h)
 
 	c := H_c(r, A, b, h, mu)
 	party.C = c
@@ -295,6 +298,8 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 		utils.VectorAdd(r, mPrime, mask_j, mPrime)
 	}
 
+	utils.PrintVector("Mask prime vector:", mPrime)
+
 	z_i := utils.InitializeVector(r, n)
 	utils.MatrixVectorMul(r, concatR, u[partyID], z_i)
 	utils.VectorAdd(r, z_i, mPrime, z_i)
@@ -302,6 +307,8 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], b structs.Vector[rin
 	utils.VectorPolyMul(r, s_i, c, s_c_lambda)
 	utils.VectorPolyMul(r, s_c_lambda, lambda, s_c_lambda)
 	utils.VectorAdd(r, z_i, s_c_lambda, z_i)
+
+	utils.PrintVector(fmt.Sprintf("Vector z for party %d:", partyID), z_i)
 
 	return z_i
 }
@@ -328,21 +335,32 @@ func (party *Party) SignFinalize(z map[int]structs.Vector[ring.Poly], masks map[
 		}
 	}
 
+	utils.PrintVector("z_sum", z_sum)
+
 	Az := utils.InitializeVector(r, m)
 	utils.MatrixVectorMul(r, A, z_sum, Az)
+
+	utils.PrintVector("Az", Az)
 
 	bc := utils.InitializeVector(r, m)
 	utils.VectorPolyMul(r, b, c, bc)
 
+	utils.PrintVector("bc", bc)
+
 	Az_bc := utils.InitializeVector(r, m)
 	utils.VectorSub(r, Az, bc, Az_bc)
+
+	utils.PrintVector("Az-bc before rounding", Az_bc)
 
 	for _, poly := range Az_bc {
 		utils.RoundCoeffsToNearestMultiple(r, poly, p)
 	}
+	utils.PrintVector("Az-bc after rounding", Az_bc)
 
 	Delta := utils.InitializeVector(r, m)
 	utils.VectorSub(r, h, Az_bc, Delta)
+
+	utils.PrintVector("Vector Delta:", Delta)
 
 	return party.C, z_sum, Delta
 }
@@ -544,6 +562,8 @@ func H_c(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly],
 	}
 	c := ternarySampler.ReadNew()
 
+	utils.PrintPolynomial("Polynomial c:", c)
+
 	return c
 }
 
@@ -568,7 +588,7 @@ func ShamirSecretSharing(r *ring.Ring, s structs.Vector[ring.Poly], t, k int) ma
 			polyCoeffs := make([]*big.Int, t)
 			polyCoeffs[0] = secret
 			for i := 1; i < t; i++ {
-				randomCoeff := big.NewInt(15) //make it random
+				randomCoeff := big.NewInt(15) // TODO: Fixed randomness for testing, make it random later
 				polyCoeffs[i] = randomCoeff
 			}
 
@@ -619,6 +639,7 @@ func ComputeLagrangeCoefficients(r *ring.Ring, T []int, modulus *big.Int) map[in
 		lagrangePoly := r.NewPoly()
 		r.SetCoefficientsBigint([]*big.Int{coeff}, lagrangePoly)
 		lagrangeCoefficients[T[i]] = lagrangePoly
+		utils.PrintPolynomial(fmt.Sprintf("Lagrange Coefficient for party %d:", T[i]), lagrangePoly)
 	}
 	return lagrangeCoefficients
 }

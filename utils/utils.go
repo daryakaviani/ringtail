@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"fmt"
 	"log"
 	"math/big"
+	"strings"
 
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/structs"
@@ -189,7 +191,7 @@ func PrintMatrix(label string, matrix structs.Matrix[ring.Poly]) {
 	log.Println(label)
 	for i, row := range matrix {
 		for j, poly := range row {
-			log.Printf("[%d][%d]: %v\n", i, j, poly.Coeffs[0])
+			log.Printf("[%d][%d]: %s\n", i, j, formatCoeffs(poly.Coeffs[0]))
 		}
 	}
 }
@@ -197,13 +199,21 @@ func PrintMatrix(label string, matrix structs.Matrix[ring.Poly]) {
 func PrintVector(label string, vector structs.Vector[ring.Poly]) {
 	log.Println(label)
 	for i, poly := range vector {
-		log.Printf("[%d]: %v\n", i, poly.Coeffs[0])
+		log.Printf("[%d]: %s\n", i, formatCoeffs(poly.Coeffs[0]))
 	}
 }
 
 func PrintPolynomial(label string, poly ring.Poly) {
 	log.Println(label)
-	log.Printf("%v\n", poly.Coeffs[0])
+	log.Printf("%s\n", formatCoeffs(poly.Coeffs[0]))
+}
+
+func formatCoeffs(coeffs []uint64) string {
+	var coeffStr []string
+	for _, coeff := range coeffs {
+		coeffStr = append(coeffStr, fmt.Sprintf("%v", coeff))
+	}
+	return strings.Join(coeffStr, ", ")
 }
 
 // NTT CONVERSION

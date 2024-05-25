@@ -8,7 +8,7 @@ import (
 	"github.com/tuneinsight/lattigo/v5/utils/structs"
 )
 
-const logN = 9
+const logN = 3
 
 func MulPolyNaive(r *ring.Ring, p1 ring.Poly, p2 ring.Poly, p3 ring.Poly) {
 	degree := 1 << logN // Since we are in a ring modulo x^8 + 1
