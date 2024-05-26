@@ -18,8 +18,8 @@ import (
 
 // PARAMETERS
 const (
-	m         = 7  // TESTING WITH SMALL PARAMS, TODO: UPDATE
-	n         = 4  // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	m         = 10 // TESTING WITH SMALL PARAMS, TODO: UPDATE
+	n         = 9  // TESTING WITH SMALL PARAMS, TODO: UPDATE
 	d         = 91 // TESTING WITH SMALL PARAMS, TODO: UPDATE
 	dbar      = d - 1
 	p         = 1 << 30
@@ -407,25 +407,37 @@ func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Pol
 		}
 	}
 
-	utils.PrintBigIntVector("Az_bc_Delta:", Az_bc_Delta)
+	//utils.PrintBigIntVector("Az_bc_Delta:", Az_bc_Delta)
 
 	computedC := H_c(r, A, b, Az_bc_Delta, mu)
 	if !r.Equal(c, computedC) {
 		return false
 	}
 
-	return CheckInfinityNorm(r, Delta, betaDelta)
+	return CheckInfinityNorm(Delta, betaDelta, new(big.Int).SetUint64(p))
 }
 
 // CheckInfinityNorm checks if the infinity norm of the vector of *big.Int Delta is less than or equal to betaDelta
-func CheckInfinityNorm(r *ring.Ring, Delta structs.Vector[[]*big.Int], betaDelta *big.Int) bool {
+func CheckInfinityNorm(Delta structs.Vector[[]*big.Int], betaDelta *big.Int, modulus *big.Int) bool {
 	maxValue := big.NewInt(0)
 
 	for _, polyCoeffs := range Delta {
 		for _, coeff := range polyCoeffs {
 			absCoeff := new(big.Int).Abs(coeff)
-			if absCoeff.Cmp(maxValue) > 0 {
-				maxValue = absCoeff
+			p_absCoeff := new(big.Int).Sub(modulus, absCoeff)
+			infNorm := big.NewInt(0)
+
+			if absCoeff.Cmp(modulus) > 0 {
+				return false
+			}
+			// |a|_inf := min{a, p-a} for a in Z_p
+			if absCoeff.Cmp(p_absCoeff) > 0 {
+				infNorm = p_absCoeff
+			} else {
+				infNorm = absCoeff
+			}
+			if infNorm.Cmp(maxValue) > 0 {
+				maxValue = infNorm
 			}
 		}
 	}
