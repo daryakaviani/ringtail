@@ -513,7 +513,8 @@ func H_u(r *ring.Ring, A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly],
 	}
 
 	prng, _ := sampling.NewKeyedPRNG(hashOutput)
-	gaussianParams := ring.DiscreteGaussian{}
+	//gaussianParams := ring.DiscreteGaussian{}
+	gaussianParams := ring.DiscreteGaussian{Sigma: sigmaU, Bound: boundU}
 	hashGaussianSampler := ring.NewGaussianSampler(prng, r, gaussianParams, false)
 
 	u_j := utils.SamplePolyVector(dbar, hashGaussianSampler)
