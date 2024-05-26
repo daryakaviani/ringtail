@@ -407,7 +407,7 @@ func Verify(r *ring.Ring, z structs.Vector[ring.Poly], A structs.Matrix[ring.Pol
 		}
 	}
 
-	//utils.PrintBigIntVector("Az_bc_Delta:", Az_bc_Delta)
+	utils.PrintBigIntVector("Az_bc_Delta:", Az_bc_Delta)
 
 	computedC := H_c(r, A, b, Az_bc_Delta, mu)
 	if !r.Equal(c, computedC) {
