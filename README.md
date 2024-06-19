@@ -1,6 +1,6 @@
 # Ringtail
 
-This is a pure Golang implementation of Ringtail, a practical two-round threshold signature scheme from LWE. Additionally, it includes detailed pseudocode of hybrids for Theorem 3.1 (see `hybrid.pdf`).
+This is a pure Golang implementation of Ringtail, a practical two-round threshold signature scheme from LWE.
 
 Codebase overview:
 - `networking/`
