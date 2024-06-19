@@ -16,3 +16,7 @@ Codebase overview:
     - `utils.go`: Helpers related to NTT and Montgomery conversions, multiplying, and initializing matrices and vectors of ring elements.
     - `utils-naive.go`: This is note used in the current version, but can be used for testing. It implements convolution-based naive ring-element multiplication.
 - `main.go`: Run the code with `go run main.go id iters parties` where `id` is the party ID of the signer running the code (use `l` if you want to run the scheme locally), `iters` is the number of iterations to average the latencies over if you are benchmarking (if not, just use 1), and `parties` is the total number of parties. This is currently a full-threshold implementation. For testing a smaller threshold, set the `Threshold` config parameter with a different value, and use `ShamirSecretSharingGeneral`.
+
+### License
+
+Ringtail is licensed under the Apache 2.0 License. See [LICENSE](https://github.com/daryakaviani/ringtail/blob/main/LICENSE).
