@@ -96,6 +96,8 @@ func Gen(r *ring.Ring, r_xi *ring.Ring, uniformSampler *ring.UniformSampler, tru
 }
 
 // SignRound1 performs the first round of signing
+
+// SignRound1 performs the first round of signing
 func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []byte, T []int) (structs.Matrix[ring.Poly], map[int][]byte) {
 	r := party.Ring
 
@@ -110,25 +112,36 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 	// Initialize R_i and E_i
 	gaussianParams = ring.DiscreteGaussian{Sigma: SigmaE, Bound: BoundE}
 	gaussianSampler = ring.NewGaussianSampler(prng, r, gaussianParams, false)
-	R_i := utils.SamplePolyMatrix(r, N, Dbar, gaussianSampler, true, true)
-	E_i := utils.SamplePolyMatrix(r, M, Dbar, gaussianSampler, true, true)
+	var R_i, E_i structs.Matrix[ring.Poly]
+	var D structs.Matrix[ring.Poly]
 
-	concatenatedR := utils.InitializeMatrix(r, N, Dbar+1)
-	for i := range concatenatedR {
-		concatenatedR[i] = append([]ring.Poly{r_star[i]}, R_i[i]...)
+	for {
+		R_i = utils.SamplePolyMatrix(r, N, Dbar, gaussianSampler, true, true)
+		E_i = utils.SamplePolyMatrix(r, M, Dbar, gaussianSampler, true, true)
+
+		concatenatedR := utils.InitializeMatrix(r, N, Dbar+1)
+		for i := range concatenatedR {
+			concatenatedR[i] = append([]ring.Poly{r_star[i]}, R_i[i]...)
+		}
+		party.R = concatenatedR
+
+		concatenatedE := utils.InitializeMatrix(r, M, Dbar+1)
+		for i := range concatenatedE {
+			concatenatedE[i] = append([]ring.Poly{e_star[i]}, E_i[i]...)
+		}
+
+		D = utils.InitializeMatrix(r, M, Dbar+1)
+		utils.MatrixMatrixMul(r, A, concatenatedR, D)
+		utils.MatrixAdd(r, concatenatedE, D, D)
+
+		utils.ConvertMatrixFromMontgomery(r, D)
+
+		if utils.FullRankCheck(D, r) {
+			utils.ConvertMatrixToMontgomery(r, D)
+			break
+		}
+		fmt.Println("D matrix is not full rank. Resampling R and E matrices.")
 	}
-	party.R = concatenatedR
-
-	// Ensure concatenatedE is properly initialized
-	concatenatedE := utils.InitializeMatrix(r, M, Dbar+1)
-	for i := range concatenatedE {
-		concatenatedE[i] = append([]ring.Poly{e_star[i]}, E_i[i]...)
-	}
-
-	D := utils.InitializeMatrix(r, M, Dbar+1)
-
-	utils.MatrixMatrixMul(r, A, concatenatedR, D)
-	utils.MatrixAdd(r, concatenatedE, D, D)
 
 	party.D = D
 

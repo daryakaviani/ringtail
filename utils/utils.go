@@ -9,6 +9,7 @@ import (
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/structs"
 	"github.com/zeebo/blake3"
+	"gonum.org/v1/gonum/mat"
 )
 
 // MatrixVectorMul performs matrix-vector multiplication.
@@ -378,8 +379,6 @@ func PrintSignRepresentation(r *ring.Ring, poly ring.Poly, modulus uint64) {
 			coeffs[i].Sub(coeffs[i], qBig)
 		}
 	}
-
-	log.Println("Coeffs", coeffs)
 }
 
 func PrintSignRepresentationVector(r *ring.Ring, vec structs.Vector[ring.Poly], modulus uint64) {
@@ -462,4 +461,97 @@ func GetRandomInt(q *big.Int) *big.Int {
 	randBytes := GetRandomBytes(len(q.Bytes()))
 	randInt := new(big.Int).SetBytes(randBytes)
 	return randInt.Mod(randInt, q)
+}
+
+// Helper function to convert a matrix of *big.Int to a Dense matrix of float64
+func bigIntMatrixToDense(matBig [][]*big.Int) *mat.Dense {
+	rows := len(matBig)
+	cols := len(matBig[0])
+	data := make([]float64, rows*cols)
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			f, _ := new(big.Float).SetInt(matBig[i][j]).Float64()
+			data[i*cols+j] = f
+		}
+	}
+	return mat.NewDense(rows, cols, data)
+}
+
+func matrixRank(matrix *mat.Dense) int {
+	var svd mat.SVD
+	ok := svd.Factorize(matrix, mat.SVDThin)
+	if !ok {
+		panic("SVD factorization failed")
+	}
+	s := svd.Values(nil)
+	rank := 0
+	const tolerance = 1e-10
+	for _, value := range s {
+		if value > tolerance {
+			rank++
+		}
+	}
+	return rank
+}
+
+// FullRankCheck checks if the given matrix is full-rank, ignoring the first column
+func FullRankCheck(D structs.Matrix[ring.Poly], r *ring.Ring) bool {
+	phi := r.N()
+	q := r.Modulus()
+	submatrices := make([][][]*big.Int, phi)
+	for i := range submatrices {
+		submatrices[i] = make([][]*big.Int, len(D))
+		for row := range submatrices[i] {
+			submatrices[i][row] = make([]*big.Int, len(D[0])-1)
+		}
+	}
+	for row := range D {
+		for col := 1; col < len(D[row]); col++ {
+			coeffs := make([]*big.Int, phi)
+			r.PolyToBigint(D[row][col], 1, coeffs)
+			for i := 0; i < phi; i++ {
+				coeff := coeffs[i].Mod(coeffs[i], q)
+				submatrices[i][row][col-1] = coeff
+			}
+		}
+	}
+	for i := range submatrices {
+		denseMatrix := bigIntMatrixToDense(submatrices[i])
+		if rank := matrixRank(denseMatrix); rank != len(D) {
+			return false
+		}
+	}
+	return true
+}
+
+// ConvertMatrixFromMontgomery converts a matrix of polynomials from Montgomery form.
+func ConvertMatrixFromMontgomery(r *ring.Ring, M structs.Matrix[ring.Poly]) {
+	for i := range M {
+		for j := range M[i] {
+			r.IMForm(M[i][j], M[i][j])
+		}
+	}
+}
+
+// ConvertMatrixToMontgomery converts a matrix of polynomials to Montgomery form.
+func ConvertMatrixToMontgomery(r *ring.Ring, M structs.Matrix[ring.Poly]) {
+	for i := range M {
+		for j := range M[i] {
+			r.MForm(M[i][j], M[i][j])
+		}
+	}
+}
+
+// ConvertVectorFromMontgomery converts a vector of polynomials from Montgomery form.
+func ConvertVectorFromMontgomery(r *ring.Ring, vec structs.Vector[ring.Poly]) {
+	for i := range vec {
+		r.IMForm(vec[i], vec[i])
+	}
+}
+
+// ConvertVectorToMontgomery converts a vector of polynomials to Montgomery form.
+func ConvertVectorToMontgomery(r *ring.Ring, vec structs.Vector[ring.Poly]) {
+	for i := range vec {
+		r.MForm(vec[i], vec[i])
+	}
 }
