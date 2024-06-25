@@ -452,10 +452,7 @@ func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) bool 
 	EtaEpsilonQSigmaU := new(big.Float).Quo(EtaEpsilonQ, new(big.Float).SetFloat64(SigmaU))
 	EtaEpsilonQSigmaUFloat, _ := EtaEpsilonQSigmaU.Float64()
 
-	if sqrtMinEigenvalue > EtaEpsilonQSigmaUFloat {
-		return true
-	}
-	return false
+	return sqrtMinEigenvalue > EtaEpsilonQSigmaUFloat
 }
 
 // Function to compute the conjugate of a ring element
