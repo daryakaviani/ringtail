@@ -3,10 +3,16 @@ package sign
 import (
 	"bytes"
 	"fmt"
+	"log"
+	"math"
+	"math/big"
+	"math/cmplx"
+
+	"gonum.org/v1/gonum/dsp/fourier"
+	"gonum.org/v1/gonum/mat"
+
 	"lattice-threshold-signature/primitives"
 	"lattice-threshold-signature/utils"
-	"log"
-	"math/big"
 
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
@@ -158,6 +164,7 @@ func (party *Party) SignRound1Verify(D map[int]structs.Matrix[ring.Poly], MACs m
 }
 
 // SignRound2 performs the second round of signing
+// SignRound2 performs the second round of signing
 func (party *Party) SignRound2(A structs.Matrix[ring.Poly], bTilde structs.Vector[ring.Poly], DExcludingParty map[int]structs.Matrix[ring.Poly], sid int, mu string, T []int, PRFKey []byte, hash []byte) (structs.Vector[ring.Poly], structs.Vector[ring.Poly]) {
 	r := party.Ring
 	r_nu := party.RingNu
@@ -185,6 +192,9 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], bTilde structs.Vecto
 	for _, D_j := range DExcludingParty {
 		utils.MatrixAdd(r, D_j, DSum, DSum)
 	}
+
+	// Call the helper function to perform the check and print the result
+	checkDSum(r, DSum, r.Modulus())
 
 	h := utils.InitializeVector(r, M)
 	utils.MatrixVectorMul(r, DSum, u, h)
@@ -340,4 +350,172 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 
 	Bsquare, _ := new(big.Int).SetString(Bsquare, 10)
 	return sumSquares.Cmp(Bsquare) <= 0
+}
+
+// Helper function to perform matrix multiplication and negacyclic FFT, then print slice lengths
+func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) {
+	phi := r.N() // Assuming phi is half the FFT size, i.e., r.N() represents 2phi.
+
+	// Create DBarSum by removing the first column from DSum
+	DBarSum := make(structs.Matrix[ring.Poly], len(DSum))
+	for i := range DSum {
+		DBarSum[i] = DSum[i][1:]
+	}
+
+	// Compute the conjugate transpose of DBarSum
+	DBarSumConjugateTranspose := make(structs.Matrix[ring.Poly], len(DBarSum[0]))
+	for i := range DBarSumConjugateTranspose {
+		DBarSumConjugateTranspose[i] = make([]ring.Poly, len(DBarSum))
+		for j := range DBarSum {
+			DBarSumConjugateTranspose[i][j] = conjugateRingElement(r, DBarSum[j][i])
+		}
+	}
+
+	// Perform matrix multiplication DBarSum * DBarSumConjugateTranspose
+	result := utils.InitializeMatrix(r, len(DBarSum), len(DBarSumConjugateTranspose[0]))
+	utils.MatrixMatrixMul(r, DBarSum, DBarSumConjugateTranspose, result)
+
+	// Convert result out of NTT format
+	utils.ConvertMatrixFromNTT(r, result)
+
+	// Perform negacyclic FFT on the resulting matrix
+	resultFFT := make(structs.Matrix[[]complex128], len(result))
+	for i := range result {
+		resultFFT[i] = make([][]complex128, len(result[i]))
+		for j := range result[i] {
+			poly := result[i][j]
+			coeffs := make([]*big.Int, phi)
+			r.PolyToBigint(poly, 1, coeffs)
+
+			// Convert big.Ints to complex128 for FFT processing
+			complexValues := make([]complex128, phi)
+			for k, coeff := range coeffs {
+				realPart, _ := new(big.Float).SetInt(coeff).Float64()
+				complexValues[k] = complex(realPart, 0)
+			}
+
+			// Applying FFT on the complex values using gonum fourier
+			fft := fourier.NewCmplxFFT(len(complexValues))
+			fftResult := fft.Coefficients(nil, complexValues)
+
+			// Extract subvector corresponding to specific primitive roots
+			primitiveRoots := make([]complex128, phi/2) // Storage for the specific roots
+			for k := 0; k < phi; k += 2 {
+				index := k + 1
+				if index < phi {
+					primitiveRoots[k/2] = fftResult[index] // Only take odd indices
+				}
+			}
+			resultFFT[i][j] = primitiveRoots
+		}
+	}
+
+	// Create phi/2 distinct submatrices from resultFFT
+	submatrices := make([]structs.Matrix[complex128], phi/2)
+	for i := 0; i < phi/2; i++ {
+		submatrix := make(structs.Matrix[complex128], len(resultFFT))
+		for j := range resultFFT {
+			submatrix[j] = make([]complex128, len(resultFFT[j]))
+			for k := range resultFFT[j] {
+				submatrix[j][k] = resultFFT[j][k][i]
+			}
+		}
+		submatrices[i] = submatrix
+	}
+
+	// Loop through and print out the dimensions of each submatrix
+	for i, submatrix := range submatrices {
+		log.Printf("Submatrix %d dimensions: %dx%d\n", i, len(submatrix), len(submatrix[0]))
+	}
+
+	// Compute eigenvalues and find the minimum eigenvalue across all submatrices
+	minEigenvalue := math.Inf(1)
+	for _, submatrix := range submatrices {
+		// Convert complex submatrix to real matrix
+		realMatrix := convertComplexToRealMatrix(submatrix)
+
+		// Compute eigenvalues using mat.Eigen for real matrices
+		var eig mat.Eigen
+		ok := eig.Factorize(realMatrix, mat.EigenRight)
+		if !ok {
+			log.Fatal("Eigendecomposition failed")
+		}
+
+		eigenvalues := eig.Values(nil)
+		for _, ev := range eigenvalues {
+			magnitude := cmplx.Abs(ev)
+			if magnitude < minEigenvalue {
+				minEigenvalue = magnitude
+			}
+		}
+	}
+
+	log.Printf("Minimum eigenvalue magnitude across all submatrices: %v\n", minEigenvalue)
+
+	sqrtMinEigenvalue := math.Sqrt(minEigenvalue)
+	EtaEpsilonQ := new(big.Float).Mul(big.NewFloat(EtaEpsilon), new(big.Float).SetInt64(Q))
+	EtaEpsilonQSigmaU := new(big.Float).Quo(EtaEpsilonQ, new(big.Float).SetFloat64(SigmaU))
+	EtaEpsilonQSigmaUFloat, _ := EtaEpsilonQSigmaU.Float64()
+
+	if sqrtMinEigenvalue > EtaEpsilonQSigmaUFloat {
+		log.Println("Check passed")
+	} else {
+		log.Println("Check failed")
+	}
+}
+
+// Function to compute the conjugate of a ring element
+func conjugateRingElement(r *ring.Ring, poly ring.Poly) ring.Poly {
+	conjugatedPoly := r.NewPoly()
+	coeffs := make([]*big.Int, r.N())
+	r.PolyToBigint(poly, 1, coeffs)
+
+	// Conjugate the coefficients
+	phi := r.N()
+	q := r.Modulus()
+	halfQ := new(big.Int).Rsh(q, 1)
+	conjugatedCoeffs := make([]*big.Int, phi)
+	for i := range coeffs {
+		if coeffs[i].Cmp(halfQ) > 0 {
+			coeffs[i].Sub(coeffs[i], q)
+		}
+		if i == 0 {
+			// w_0 stays the same
+			conjugatedCoeffs[i] = new(big.Int).Set(coeffs[i])
+		} else {
+			// w_i becomes -w_i at index phi-i
+			conjugatedCoeffs[phi-i] = new(big.Int).Neg(coeffs[i])
+			conjugatedCoeffs[phi-i].Mod(conjugatedCoeffs[phi-i], q) // ensure the coefficient is within the modulus
+		}
+	}
+
+	// Convert back to unsigned representation
+	for i := range conjugatedCoeffs {
+		if conjugatedCoeffs[i].Cmp(big.NewInt(0)) < 0 {
+			conjugatedCoeffs[i].Add(conjugatedCoeffs[i], q)
+		}
+	}
+
+	r.SetCoefficientsBigint(conjugatedCoeffs, conjugatedPoly)
+
+	return conjugatedPoly
+}
+
+// Helper function to convert a complex matrix to a real matrix
+func convertComplexToRealMatrix(complexMatrix structs.Matrix[complex128]) *mat.Dense {
+	rows := len(complexMatrix)
+	cols := len(complexMatrix[0])
+	realMatrix := mat.NewDense(2*rows, 2*cols, nil)
+
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			c := complexMatrix[i][j]
+			realMatrix.Set(2*i, 2*j, real(c))
+			realMatrix.Set(2*i, 2*j+1, -imag(c))
+			realMatrix.Set(2*i+1, 2*j, imag(c))
+			realMatrix.Set(2*i+1, 2*j+1, real(c))
+		}
+	}
+
+	return realMatrix
 }

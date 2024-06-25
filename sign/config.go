@@ -23,4 +23,5 @@ const (
 	CombinerID      = 1
 	Xi              = 30
 	Nu              = 30
+	EtaEpsilon      = 2.650104
 )
