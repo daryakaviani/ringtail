@@ -423,11 +423,6 @@ func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) bool 
 		submatrices[i] = submatrix
 	}
 
-	// Loop through and print out the dimensions of each submatrix
-	for i, submatrix := range submatrices {
-		log.Printf("Submatrix %d dimensions: %dx%d\n", i, len(submatrix), len(submatrix[0]))
-	}
-
 	// Compute eigenvalues and find the minimum eigenvalue across all submatrices
 	minEigenvalue := math.Inf(1)
 	for _, submatrix := range submatrices {
