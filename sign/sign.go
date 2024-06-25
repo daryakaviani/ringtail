@@ -354,7 +354,7 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 
 // Helper function to perform matrix multiplication and negacyclic FFT, then print slice lengths
 func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) {
-	phi := r.N() // Assuming phi is half the FFT size, i.e., r.N() represents 2phi.
+	phi := r.N()
 
 	// Create DBarSum by removing the first column from DSum
 	DBarSum := make(structs.Matrix[ring.Poly], len(DSum))
@@ -374,8 +374,6 @@ func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) {
 	// Perform matrix multiplication DBarSum * DBarSumConjugateTranspose
 	result := utils.InitializeMatrix(r, len(DBarSum), len(DBarSumConjugateTranspose[0]))
 	utils.MatrixMatrixMul(r, DBarSum, DBarSumConjugateTranspose, result)
-
-	// Convert result out of NTT format
 	utils.ConvertMatrixFromNTT(r, result)
 
 	// Perform negacyclic FFT on the resulting matrix
