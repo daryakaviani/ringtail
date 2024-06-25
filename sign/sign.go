@@ -194,7 +194,9 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], bTilde structs.Vecto
 	}
 
 	// Call the helper function to perform the check and print the result
-	checkDSum(r, DSum, r.Modulus())
+	if !checkDSum(r, DSum, r.Modulus()) {
+		log.Fatalf("Check failed! Aborting.")
+	}
 
 	h := utils.InitializeVector(r, M)
 	utils.MatrixVectorMul(r, DSum, u, h)
@@ -353,7 +355,7 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 }
 
 // Helper function to perform matrix multiplication and negacyclic FFT, then print slice lengths
-func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) {
+func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) bool {
 	phi := r.N()
 
 	// Create DBarSum by removing the first column from DSum
@@ -456,10 +458,9 @@ func checkDSum(r *ring.Ring, DSum structs.Matrix[ring.Poly], mod *big.Int) {
 	EtaEpsilonQSigmaUFloat, _ := EtaEpsilonQSigmaU.Float64()
 
 	if sqrtMinEigenvalue > EtaEpsilonQSigmaUFloat {
-		log.Println("Check passed")
-	} else {
-		log.Println("Check failed")
+		return true
 	}
+	return false
 }
 
 // Function to compute the conjugate of a ring element
