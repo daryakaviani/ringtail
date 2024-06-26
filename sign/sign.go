@@ -148,8 +148,8 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 	return D, MACs
 }
 
-// SignRound1Verify verifies the MACs received in round 1 and performs the minimum eigenvalue check
-func (party *Party) SignRound1Verify(D map[int]structs.Matrix[ring.Poly], MACs map[int]map[int][]byte, sid int, T []int) (bool, structs.Matrix[ring.Poly]) {
+// SignRound2Preprocess verifies the MACs received in round 1 and performs the minimum eigenvalue check
+func (party *Party) SignRound2Preprocess(D map[int]structs.Matrix[ring.Poly], MACs map[int]map[int][]byte, sid int, T []int) (bool, structs.Matrix[ring.Poly]) {
 	for _, j := range T {
 		if j != party.ID {
 			MAC := MACs[j][party.ID]
@@ -160,7 +160,6 @@ func (party *Party) SignRound1Verify(D map[int]structs.Matrix[ring.Poly], MACs m
 		}
 	}
 
-	// Compute DSum
 	DSum := utils.InitializeMatrix(party.Ring, M, Dbar+1)
 	for _, D_j := range D {
 		utils.MatrixAdd(party.Ring, D_j, DSum, DSum)

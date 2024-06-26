@@ -22,7 +22,7 @@ func LocalRun(x int) {
 
 	// Create maps to collect durations across all runs
 	totalSignRound1Durations := make(map[int]float64)
-	totalSignRound1VerifyDurations := make(map[int]float64)
+	totalSignRound2PreprocessDurations := make(map[int]float64)
 	totalSignRound2Durations := make(map[int]float64)
 
 	for run := 0; run < x; run++ {
@@ -66,7 +66,7 @@ func LocalRun(x int) {
 
 		// Create maps to collect durations for this run
 		signRound1Durations := make(map[int]time.Duration)
-		signRound1VerifyDurations := make(map[int]time.Duration)
+		signRound2PreprocessDurations := make(map[int]time.Duration)
 		signRound2Durations := make(map[int]time.Duration)
 
 		// SIGNATURE ROUND 1
@@ -97,19 +97,11 @@ func LocalRun(x int) {
 		for _, partyID := range T {
 			log.Println("Sign Round 1 verify, party", partyID)
 			start = time.Now()
-			valid, DSum := parties[partyID].SignRound1Verify(D, MACs, sid, T)
+			valid, DSum := parties[partyID].SignRound2Preprocess(D, MACs, sid, T)
 			if !valid {
 				log.Fatalf("MAC verification failed for party %d", partyID)
 			}
-			signRound1VerifyDurations[partyID] = time.Since(start)
-
-			// Create new maps excluding the party's own D and mask
-			DExcludingParty := make(map[int]structs.Matrix[ring.Poly])
-			for key, value := range D {
-				if key != partyID {
-					DExcludingParty[key] = value
-				}
-			}
+			signRound2PreprocessDurations[partyID] = time.Since(start)
 
 			log.Println("Sign round 2 party", partyID)
 			start = time.Now()
@@ -140,8 +132,8 @@ func LocalRun(x int) {
 		for partyID, duration := range signRound1Durations {
 			totalSignRound1Durations[partyID] += float64(duration.Nanoseconds()) / 1e6
 		}
-		for partyID, duration := range signRound1VerifyDurations {
-			totalSignRound1VerifyDurations[partyID] += float64(duration.Nanoseconds()) / 1e6
+		for partyID, duration := range signRound2PreprocessDurations {
+			totalSignRound2PreprocessDurations[partyID] += float64(duration.Nanoseconds()) / 1e6
 		}
 		for partyID, duration := range signRound2Durations {
 			totalSignRound2Durations[partyID] += float64(duration.Nanoseconds()) / 1e6
@@ -157,15 +149,15 @@ func LocalRun(x int) {
 
 	// Calculate and print averaged statistics for each phase
 	printAveragedStats("Signature Round 1", totalSignRound1Durations, x)
-	printAveragedStats("Signature Round 1 Verify", totalSignRound1VerifyDurations, x)
+	printAveragedStats("Signature Round 1 Verify", totalSignRound2PreprocessDurations, x)
 	printAveragedStats("Signature Round 2", totalSignRound2Durations, x)
 
 	// Calculate and print total signing and offline durations
 	totalSigningDurations := make(map[int]float64)
 	totalSigningOfflineDurations := make(map[int]float64)
 	for partyID := range totalSignRound1Durations {
-		totalSigningDurations[partyID] = totalSignRound1Durations[partyID] + totalSignRound1VerifyDurations[partyID] + float64(totalHashDDuration.Nanoseconds())/1e6/float64(x) + totalSignRound2Durations[partyID]
-		totalSigningOfflineDurations[partyID] = totalSignRound1VerifyDurations[partyID] + float64(totalHashDDuration.Nanoseconds())/1e6/float64(x)
+		totalSigningDurations[partyID] = totalSignRound1Durations[partyID] + totalSignRound2PreprocessDurations[partyID] + float64(totalHashDDuration.Nanoseconds())/1e6/float64(x) + totalSignRound2Durations[partyID]
+		totalSigningOfflineDurations[partyID] = totalSignRound2PreprocessDurations[partyID] + float64(totalHashDDuration.Nanoseconds())/1e6/float64(x)
 	}
 	printAveragedStats("Total Signing", totalSigningDurations, x)
 	printAveragedStats("Signing Offline", totalSigningOfflineDurations, x)

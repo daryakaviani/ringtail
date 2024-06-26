@@ -64,7 +64,7 @@ func main() {
 	go networking.EstablishConnections(&connWg, comm, partyID, sign.K)
 	connWg.Wait()
 
-	var setupDuration, genDuration, signRound1Duration, signRound1VerifyDuration, signRound2Duration, finalizeDuration, verifyDuration, hashDuration time.Duration
+	var setupDuration, genDuration, signRound1Duration, signRound2PreprocessDuration, signRound2Duration, finalizeDuration, verifyDuration, hashDuration time.Duration
 	var genStart, genEnd, signRound1Start, signRound1End, signRound2Start, signRound2End, combinerReceiveEnd, combinerFinalizeEnd time.Time
 	var A structs.Matrix[ring.Poly]
 	var b structs.Vector[ring.Poly]
@@ -179,20 +179,13 @@ func main() {
 
 	fmt.Printf("Timestamp before Sign Round 1 verify: %s\n", time.Now().Format("15:04:05.000000"))
 	start = time.Now()
-	valid, DSum := party.SignRound1Verify(D, MACs, sid, T)
+	valid, DSum := party.SignRound2Preprocess(D, MACs, sid, T)
 	if !valid {
 		log.Fatalf("MAC verification failed for party %d", partyID)
 	} else {
 		log.Println("Verification passed, moving onto round 2")
 	}
-	signRound1VerifyDuration = time.Since(start)
-
-	DExcludingParty := make(map[int]structs.Matrix[ring.Poly])
-	for key, value := range D {
-		if key != partyID {
-			DExcludingParty[key] = value
-		}
-	}
+	signRound2PreprocessDuration = time.Since(start)
 
 	fmt.Printf("Timestamp before Sign Round 2 compute: %s\n", time.Now().Format("15:04:05.000000"))
 	start = time.Now()
@@ -232,7 +225,7 @@ func main() {
 	fmt.Println("Setup duration:", setupDuration)
 	fmt.Println("Gen duration:", genDuration)
 	fmt.Println("Signature Round 1 duration:", signRound1Duration)
-	fmt.Println("Signature Round 1 verify duration:", signRound1VerifyDuration)
+	fmt.Println("Signature Round 1 verify duration:", signRound2PreprocessDuration)
 	fmt.Println("Hash duration:", hashDuration)
 	fmt.Println("Signature Round 2 duration:", signRound2Duration)
 	fmt.Println("Finalize duration:", finalizeDuration)
