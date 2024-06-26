@@ -179,7 +179,7 @@ func main() {
 
 	fmt.Printf("Timestamp before Sign Round 1 verify: %s\n", time.Now().Format("15:04:05.000000"))
 	start = time.Now()
-	valid := party.SignRound1Verify(D, MACs, sid, T)
+	valid, DSum := party.SignRound1Verify(D, MACs, sid, T)
 	if !valid {
 		log.Fatalf("MAC verification failed for party %d", partyID)
 	} else {
@@ -196,7 +196,7 @@ func main() {
 
 	fmt.Printf("Timestamp before Sign Round 2 compute: %s\n", time.Now().Format("15:04:05.000000"))
 	start = time.Now()
-	z[partyID], masks[partyID] = party.SignRound2(A, b, DExcludingParty, sid, mu, T, []byte(PRFKey), hash)
+	z[partyID], masks[partyID] = party.SignRound2(A, b, DSum, sid, mu, T, []byte(PRFKey), hash)
 	signRound2Duration = time.Since(start)
 
 	signRound2Start = time.Now()

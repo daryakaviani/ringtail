@@ -148,22 +148,34 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 	return D, MACs
 }
 
-// SignRound1Verify verifies the MACs received in round 1
-func (party *Party) SignRound1Verify(D map[int]structs.Matrix[ring.Poly], MACs map[int]map[int][]byte, sid int, T []int) bool {
+// SignRound1Verify verifies the MACs received in round 1 and performs the minimum eigenvalue check
+func (party *Party) SignRound1Verify(D map[int]structs.Matrix[ring.Poly], MACs map[int]map[int][]byte, sid int, T []int) (bool, structs.Matrix[ring.Poly]) {
 	for _, j := range T {
 		if j != party.ID {
 			MAC := MACs[j][party.ID]
 			expectedMAC := primitives.GenerateMAC(D[j], party.MACKeys[j], party.ID, sid, T, j, true)
 			if !bytes.Equal(MAC, expectedMAC) {
-				return false
+				return false, nil
 			}
 		}
 	}
-	return true
+
+	// Compute DSum
+	DSum := utils.InitializeMatrix(party.Ring, M, Dbar+1)
+	for _, D_j := range D {
+		utils.MatrixAdd(party.Ring, D_j, DSum, DSum)
+	}
+
+	if !CheckMinEigenvalue(party.Ring, DSum) {
+		log.Fatalf("Minimum eigenvalue check failed! Aborting.")
+		return false, nil
+	}
+
+	return true, DSum
 }
 
 // SignRound2 performs the second round of signing
-func (party *Party) SignRound2(A structs.Matrix[ring.Poly], bTilde structs.Vector[ring.Poly], DExcludingParty map[int]structs.Matrix[ring.Poly], sid int, mu string, T []int, PRFKey []byte, hash []byte) (structs.Vector[ring.Poly], structs.Vector[ring.Poly]) {
+func (party *Party) SignRound2(A structs.Matrix[ring.Poly], bTilde structs.Vector[ring.Poly], DSum structs.Matrix[ring.Poly], sid int, mu string, T []int, PRFKey []byte, hash []byte) (structs.Vector[ring.Poly], structs.Vector[ring.Poly]) {
 	r := party.Ring
 	r_nu := party.RingNu
 	partyID := party.ID
@@ -177,22 +189,11 @@ func (party *Party) SignRound2(A structs.Matrix[ring.Poly], bTilde structs.Vecto
 	r.NTT(onePoly, onePoly)
 	r.MForm(onePoly, onePoly)
 
-	DExcludingParty[partyID] = party.D
-
 	u := structs.Vector[ring.Poly]{}
 	oneSlice := structs.Vector[ring.Poly]{onePoly}
 	if Dbar > 0 {
 		h_u := primitives.GaussianHash(r, hash, mu, SigmaU, BoundU, Dbar)
 		u = append(oneSlice, h_u...)
-	}
-
-	DSum := utils.InitializeMatrix(r, M, Dbar+1)
-	for _, D_j := range DExcludingParty {
-		utils.MatrixAdd(r, D_j, DSum, DSum)
-	}
-
-	if !CheckMinEigenvalue(r, DSum) {
-		log.Fatalf("Minimum eigenvalue check failed! Aborting.")
 	}
 
 	h := utils.InitializeVector(r, M)

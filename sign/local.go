@@ -97,7 +97,7 @@ func LocalRun(x int) {
 		for _, partyID := range T {
 			log.Println("Sign Round 1 verify, party", partyID)
 			start = time.Now()
-			valid := parties[partyID].SignRound1Verify(D, MACs, sid, T)
+			valid, DSum := parties[partyID].SignRound1Verify(D, MACs, sid, T)
 			if !valid {
 				log.Fatalf("MAC verification failed for party %d", partyID)
 			}
@@ -113,7 +113,7 @@ func LocalRun(x int) {
 
 			log.Println("Sign round 2 party", partyID)
 			start = time.Now()
-			z[partyID], masks[partyID] = parties[partyID].SignRound2(A, b, DExcludingParty, sid, mu, T, []byte(PRFKey), hash)
+			z[partyID], masks[partyID] = parties[partyID].SignRound2(A, b, DSum, sid, mu, T, []byte(PRFKey), hash)
 			signRound2Durations[partyID] = time.Since(start)
 		}
 
