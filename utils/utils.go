@@ -463,3 +463,15 @@ func GetRandomInt(q *big.Int) *big.Int {
 	randInt := new(big.Int).SetBytes(randBytes)
 	return randInt.Mod(randInt, q)
 }
+
+// Convert to signed representation
+func SignedRepresentation(coeffs []*big.Int, Q uint64) {
+	qBig := new(big.Int).SetUint64(Q)
+	halfQ := new(big.Int).Div(qBig, big.NewInt(2))
+
+	for i := 0; i < len(coeffs); i++ {
+		if coeffs[i].Cmp(halfQ) > 0 {
+			coeffs[i].Sub(coeffs[i], qBig)
+		}
+	}
+}

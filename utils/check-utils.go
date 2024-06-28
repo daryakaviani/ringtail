@@ -1,11 +1,15 @@
 package utils
 
 import (
+	"math/big"
 	"math/cmplx"
 
+	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/structs"
 	"gonum.org/v1/gonum/mat"
 )
+
+const Q = 0x1000000004A01
 
 // Multiply a matrix by its conjugate transpose
 func MultiplyByConjugateTranspose(matrix structs.Matrix[complex128]) structs.Matrix[complex128] {
@@ -52,4 +56,29 @@ func ConvertComplexToRealMatrix(complexMatrix structs.Matrix[complex128]) *mat.D
 	}
 
 	return realMatrix
+}
+
+// CheckRowCoprime checks if the entries of a row are setwise coprime
+func CheckRowCoprime(r *ring.Ring, row []ring.Poly) bool {
+	if len(row) == 0 {
+		return true
+	}
+	gcd := CalculateAlgebraicNorm(r, row[0])
+	for i := 1; i < len(row); i++ {
+		norm := CalculateAlgebraicNorm(r, row[i])
+		newGCD := new(big.Int).GCD(nil, nil, gcd, norm)
+		if newGCD.Cmp(big.NewInt(1)) == 0 {
+			return true
+		}
+		gcd = newGCD
+	}
+	return gcd.Cmp(big.NewInt(1)) == 0
+}
+
+// Calculate the algebraic norm using Karatsuba multiplication
+func CalculateAlgebraicNorm(r *ring.Ring, poly ring.Poly) *big.Int {
+	coeffs := make([]*big.Int, r.N())
+	r.PolyToBigint(poly, 1, coeffs)
+	SignedRepresentation(coeffs, Q)
+	return KaratsubaNorm(coeffs)
 }

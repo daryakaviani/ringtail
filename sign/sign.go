@@ -165,8 +165,20 @@ func (party *Party) SignRound2Preprocess(D map[int]structs.Matrix[ring.Poly], MA
 		utils.MatrixAdd(party.Ring, D_j, DSum, DSum)
 	}
 
-	if !CheckMinEigenvalue(party.Ring, DSum) {
+	DBar := make(structs.Matrix[ring.Poly], len(DSum))
+	for i := range DSum {
+		DBar[i] = DSum[i][1:]
+	}
+
+	utils.ConvertMatrixFromNTT(party.Ring, DBar)
+
+	if !CheckMinEigenvalue(party.Ring, DBar) {
 		log.Fatalf("Minimum eigenvalue check failed! Aborting.")
+		return false, nil
+	}
+
+	if !CheckCoprimeEntries(party.Ring, DBar) {
+		log.Fatalf("Coprime check failed! Aborting.")
 		return false, nil
 	}
 
@@ -351,14 +363,8 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 }
 
 // Eigenvalue check on DSum matrix
-func CheckMinEigenvalue(r *ring.Ring, DSum structs.Matrix[ring.Poly]) bool {
+func CheckMinEigenvalue(r *ring.Ring, DBar structs.Matrix[ring.Poly]) bool {
 	phi := r.N()
-	DBar := make(structs.Matrix[ring.Poly], len(DSum))
-	for i := range DSum {
-		DBar[i] = DSum[i][1:]
-	}
-
-	utils.ConvertMatrixFromNTT(r, DBar)
 
 	DBarFFT := make(structs.Matrix[[]complex128], len(DBar))
 	for i := range DBar {
@@ -429,4 +435,14 @@ func CheckMinEigenvalue(r *ring.Ring, DSum structs.Matrix[ring.Poly]) bool {
 	EtaEpsilonQSigmaUFloat, _ := EtaEpsilonQSigmaU.Float64()
 
 	return sqrtMinEigenvalue > EtaEpsilonQSigmaUFloat
+}
+
+// CheckCoprimeEntries checks if the entries of all rows in DBar are setwise coprime
+func CheckCoprimeEntries(r *ring.Ring, DBar structs.Matrix[ring.Poly]) bool {
+	for _, row := range DBar {
+		if !utils.CheckRowCoprime(r, row) {
+			return false
+		}
+	}
+	return true
 }
