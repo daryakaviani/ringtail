@@ -12,7 +12,6 @@ func MultiplyByConjugateTranspose(matrix structs.Matrix[complex128]) structs.Mat
 	rows := len(matrix)
 	cols := len(matrix[0])
 
-	// Initialize the conjugate transpose
 	conjTranspose := make(structs.Matrix[complex128], cols)
 	for i := 0; i < cols; i++ {
 		conjTranspose[i] = make([]complex128, rows)
@@ -21,13 +20,12 @@ func MultiplyByConjugateTranspose(matrix structs.Matrix[complex128]) structs.Mat
 		}
 	}
 
-	// Multiply matrix by its conjugate transpose
 	result := make(structs.Matrix[complex128], rows)
 	for i := 0; i < rows; i++ {
-		result[i] = make([]complex128, rows) // Correct the dimension of result matrix
-		for j := 0; j < rows; j++ {          // Correct the dimension of result matrix
+		result[i] = make([]complex128, rows)
+		for j := 0; j < rows; j++ {
 			var sum complex128
-			for k := 0; k < cols; k++ { // Iterate over the number of columns in the original matrix
+			for k := 0; k < cols; k++ {
 				sum += matrix[i][k] * conjTranspose[k][j]
 			}
 			result[i][j] = sum

@@ -333,7 +333,6 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 		r.PolyToBigint(polyCoeffs, 1, zCoeffsBigInt[i])
 	}
 
-	// utils.PrintSignRepresentationVector(r, z, Q)
 	for _, polyCoeffs := range zCoeffsBigInt {
 		for _, coeff := range polyCoeffs {
 			if coeff.Cmp(halfQ) > 0 {
@@ -352,9 +351,8 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 }
 
 // Eigenvalue check on DSum matrix
-// Eigenvalue check on DSum matrix
 func CheckMinEigenvalue(r *ring.Ring, DSum structs.Matrix[ring.Poly]) bool {
-	phi := r.N() // Get the normalization factor
+	phi := r.N()
 	DBar := make(structs.Matrix[ring.Poly], len(DSum))
 	for i := range DSum {
 		DBar[i] = DSum[i][1:]
@@ -379,14 +377,14 @@ func CheckMinEigenvalue(r *ring.Ring, DSum structs.Matrix[ring.Poly]) bool {
 			fft := fourier.NewCmplxFFT(len(complexValues))
 			fftResult := fft.Coefficients(nil, complexValues)
 
-			primitiveRoots := make([]complex128, phi/2) // Storage for the specific roots
+			primitiveRootFFT := make([]complex128, phi/2)
 			for k := 0; k < phi; k += 2 {
 				index := k + 1
 				if index < phi {
-					primitiveRoots[k/2] = fftResult[index] // Only take odd indices
+					primitiveRootFFT[k/2] = fftResult[index]
 				}
 			}
-			DBarFFT[i][j] = primitiveRoots
+			DBarFFT[i][j] = primitiveRootFFT
 		}
 	}
 
