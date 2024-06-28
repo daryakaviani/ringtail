@@ -352,8 +352,9 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 }
 
 // Eigenvalue check on DSum matrix
+// Eigenvalue check on DSum matrix
 func CheckMinEigenvalue(r *ring.Ring, DSum structs.Matrix[ring.Poly]) bool {
-	phi := r.N()
+	phi := r.N() // Get the normalization factor
 	DBar := make(structs.Matrix[ring.Poly], len(DSum))
 	for i := range DSum {
 		DBar[i] = DSum[i][1:]
@@ -424,7 +425,7 @@ func CheckMinEigenvalue(r *ring.Ring, DSum structs.Matrix[ring.Poly]) bool {
 		}
 	}
 
-	sqrtMinEigenvalue := math.Sqrt(minEigenvalue)
+	sqrtMinEigenvalue := math.Sqrt(minEigenvalue) / float64(phi)
 	EtaEpsilonQ := new(big.Float).Mul(big.NewFloat(EtaEpsilon), new(big.Float).SetInt64(Q))
 	EtaEpsilonQSigmaU := new(big.Float).Quo(EtaEpsilonQ, new(big.Float).SetFloat64(SigmaU))
 	EtaEpsilonQSigmaUFloat, _ := EtaEpsilonQSigmaU.Float64()
