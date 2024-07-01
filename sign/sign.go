@@ -149,13 +149,15 @@ func (party *Party) SignRound1(A structs.Matrix[ring.Poly], sid int, PRFKey []by
 }
 
 // SignRound2Preprocess verifies the MACs received in round 1 and performs the minimum eigenvalue check
-func (party *Party) SignRound2Preprocess(D map[int]structs.Matrix[ring.Poly], MACs map[int]map[int][]byte, sid int, T []int) (bool, structs.Matrix[ring.Poly]) {
+func (party *Party) SignRound2Preprocess(A structs.Matrix[ring.Poly], b structs.Vector[ring.Poly], D map[int]structs.Matrix[ring.Poly], MACs map[int]map[int][]byte, sid int, T []int) (bool, structs.Matrix[ring.Poly], []byte) {
+	hash := primitives.Hash(A, b, D, sid, T)
+
 	for _, j := range T {
 		if j != party.ID {
 			MAC := MACs[j][party.ID]
 			expectedMAC := primitives.GenerateMAC(D[j], party.MACKeys[j], party.ID, sid, T, j, true)
 			if !bytes.Equal(MAC, expectedMAC) {
-				return false, nil
+				return false, nil, nil
 			}
 		}
 	}
@@ -167,22 +169,25 @@ func (party *Party) SignRound2Preprocess(D map[int]structs.Matrix[ring.Poly], MA
 
 	DBar := make(structs.Matrix[ring.Poly], len(DSum))
 	for i := range DSum {
-		DBar[i] = DSum[i][1:]
+		DBar[i] = make([]ring.Poly, len(DSum[i])-1)
+		for j := 1; j < len(DSum[i]); j++ {
+			DBar[i][j-1] = *DSum[i][j].CopyNew()
+		}
 	}
 
 	utils.ConvertMatrixFromNTT(party.Ring, DBar)
 
 	if !CheckMinEigenvalue(party.Ring, DBar) {
 		log.Fatalf("Minimum eigenvalue check failed! Aborting.")
-		return false, nil
+		return false, nil, nil
 	}
 
 	if !CheckCoprimeEntries(party.Ring, DBar) {
 		log.Fatalf("Coprime check failed! Aborting.")
-		return false, nil
+		return false, nil, nil
 	}
 
-	return true, DSum
+	return true, DSum, hash
 }
 
 // SignRound2 performs the second round of signing
@@ -324,7 +329,7 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 	halfQ := new(big.Int).Div(qBig, big.NewInt(2))
 
 	DeltaCoeffsBigInt := make(structs.Vector[[]*big.Int], r.N())
-	for i, polyCoeffs := range z {
+	for i, polyCoeffs := range Delta {
 		DeltaCoeffsBigInt[i] = make([]*big.Int, r.N())
 		r.PolyToBigint(polyCoeffs, 1, DeltaCoeffsBigInt[i])
 	}

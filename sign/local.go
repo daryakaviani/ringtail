@@ -18,7 +18,7 @@ var Threshold int
 
 // main function orchestrates the threshold signature protocol
 func LocalRun(x int) {
-	var totalGenDuration, totalFinalizeDuration, totalVerifyDuration, totalHashDDuration time.Duration
+	var totalGenDuration, totalFinalizeDuration, totalVerifyDuration time.Duration
 
 	// Create maps to collect durations across all runs
 	totalSignRound1Durations := make(map[int]float64)
@@ -27,7 +27,7 @@ func LocalRun(x int) {
 
 	for run := 0; run < x; run++ {
 		log.Println("RUN:", run)
-		var genDuration, finalizeDuration, verifyDuration, hashDDuration time.Duration
+		var genDuration, finalizeDuration, verifyDuration time.Duration
 
 		randomKey := make([]byte, KeySize)
 
@@ -90,14 +90,11 @@ func LocalRun(x int) {
 		// SIGNATURE ROUND 2
 		z := make(map[int]structs.Vector[ring.Poly])
 		masks := make(map[int]structs.Vector[ring.Poly])
-		start = time.Now()
-		hash := primitives.Hash(A, b, D, sid, T)
-		hashDDuration = time.Since(start)
 
 		for _, partyID := range T {
-			log.Println("Sign Round 1 verify, party", partyID)
+			log.Println("Sign Round 2 preprocess, party", partyID)
 			start = time.Now()
-			valid, DSum := parties[partyID].SignRound2Preprocess(D, MACs, sid, T)
+			valid, DSum, hash := parties[partyID].SignRound2Preprocess(A, b, D, MACs, sid, T)
 			if !valid {
 				log.Fatalf("MAC verification failed for party %d", partyID)
 			}
@@ -126,7 +123,6 @@ func LocalRun(x int) {
 		totalGenDuration += genDuration
 		totalFinalizeDuration += finalizeDuration
 		totalVerifyDuration += verifyDuration
-		totalHashDDuration += hashDDuration
 
 		// Accumulate phase durations
 		for partyID, duration := range signRound1Durations {
@@ -145,22 +141,18 @@ func LocalRun(x int) {
 	fmt.Printf("Gen duration: %.3f ms\n", float64(totalGenDuration.Nanoseconds())/1e6/float64(x))
 	fmt.Printf("Finalize duration: %.3f ms\n", float64(totalFinalizeDuration.Nanoseconds())/1e6/float64(x))
 	fmt.Printf("Verify duration: %.3f ms\n", float64(totalVerifyDuration.Nanoseconds())/1e6/float64(x))
-	fmt.Printf("Hash D duration: %.3f ms\n", float64(totalHashDDuration.Nanoseconds())/1e6/float64(x))
 
 	// Calculate and print averaged statistics for each phase
 	printAveragedStats("Signature Round 1", totalSignRound1Durations, x)
-	printAveragedStats("Signature Round 1 Verify", totalSignRound2PreprocessDurations, x)
+	printAveragedStats("Signature Round 2 Preprocess", totalSignRound2PreprocessDurations, x)
 	printAveragedStats("Signature Round 2", totalSignRound2Durations, x)
 
 	// Calculate and print total signing and offline durations
 	totalSigningDurations := make(map[int]float64)
-	totalSigningOfflineDurations := make(map[int]float64)
 	for partyID := range totalSignRound1Durations {
-		totalSigningDurations[partyID] = totalSignRound1Durations[partyID] + totalSignRound2PreprocessDurations[partyID] + float64(totalHashDDuration.Nanoseconds())/1e6/float64(x) + totalSignRound2Durations[partyID]
-		totalSigningOfflineDurations[partyID] = totalSignRound2PreprocessDurations[partyID] + float64(totalHashDDuration.Nanoseconds())/1e6/float64(x)
+		totalSigningDurations[partyID] = totalSignRound1Durations[partyID] + totalSignRound2PreprocessDurations[partyID] + totalSignRound2Durations[partyID]
 	}
 	printAveragedStats("Total Signing", totalSigningDurations, x)
-	printAveragedStats("Signing Offline", totalSigningOfflineDurations, x)
 }
 
 // printAveragedStats prints the mean, median, and standard deviation for a map of durations averaged over x runs
