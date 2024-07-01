@@ -64,7 +64,7 @@ func main() {
 	go networking.EstablishConnections(&connWg, comm, partyID, sign.K)
 	connWg.Wait()
 
-	var setupDuration, genDuration, signRound1Duration, signRound2PreprocessDuration, signRound2Duration, finalizeDuration, verifyDuration, hashDuration time.Duration
+	var setupDuration, genDuration, signRound1Duration, signRound2PreprocessDuration, signRound2Duration, finalizeDuration, verifyDuration time.Duration
 	var genStart, genEnd, signRound1Start, signRound1End, signRound2Start, signRound2End, combinerReceiveEnd, combinerFinalizeEnd time.Time
 	var A structs.Matrix[ring.Poly]
 	var b structs.Vector[ring.Poly]
@@ -173,13 +173,10 @@ func main() {
 	// SIGN ROUND 2
 	z := make(map[int]structs.Vector[ring.Poly])
 	masks := make(map[int]structs.Vector[ring.Poly])
-	start = time.Now()
-	hash := primitives.Hash(A, b, D, sid, T)
-	hashDuration = time.Since(start)
 
 	fmt.Printf("Timestamp before Sign Round 1 verify: %s\n", time.Now().Format("15:04:05.000000"))
 	start = time.Now()
-	valid, DSum := party.SignRound2Preprocess(D, MACs, sid, T)
+	valid, DSum, hash := party.SignRound2Preprocess(A, b, D, MACs, sid, T)
 	if !valid {
 		log.Fatalf("MAC verification failed for party %d", partyID)
 	} else {
@@ -226,7 +223,6 @@ func main() {
 	fmt.Println("Gen duration:", genDuration)
 	fmt.Println("Signature Round 1 duration:", signRound1Duration)
 	fmt.Println("Signature Round 1 verify duration:", signRound2PreprocessDuration)
-	fmt.Println("Hash duration:", hashDuration)
 	fmt.Println("Signature Round 2 duration:", signRound2Duration)
 	fmt.Println("Finalize duration:", finalizeDuration)
 	fmt.Println("Verify duration:", verifyDuration)
