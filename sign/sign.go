@@ -373,6 +373,7 @@ func CheckMinEigenvalue(r *ring.Ring, DBar structs.Matrix[ring.Poly]) bool {
 			poly := DBar[i][j]
 			coeffs := make([]*big.Int, phi)
 			r.PolyToBigint(poly, 1, coeffs)
+			utils.SignedRepresentation(coeffs, Q)
 
 			complexValues := make([]complex128, phi)
 			for k, coeff := range coeffs {
