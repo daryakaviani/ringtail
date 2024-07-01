@@ -169,7 +169,10 @@ func (party *Party) SignRound2Preprocess(A structs.Matrix[ring.Poly], b structs.
 
 	DBar := make(structs.Matrix[ring.Poly], len(DSum))
 	for i := range DSum {
-		DBar[i] = DSum[i][1:]
+		DBar[i] = make([]ring.Poly, len(DSum[i])-1)
+		for j := 1; j < len(DSum[i]); j++ {
+			DBar[i][j-1] = *DSum[i][j].CopyNew()
+		}
 	}
 
 	utils.ConvertMatrixFromNTT(party.Ring, DBar)
