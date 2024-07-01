@@ -329,7 +329,7 @@ func CheckL2Norm(r *ring.Ring, Delta structs.Vector[ring.Poly], z structs.Vector
 	halfQ := new(big.Int).Div(qBig, big.NewInt(2))
 
 	DeltaCoeffsBigInt := make(structs.Vector[[]*big.Int], r.N())
-	for i, polyCoeffs := range z {
+	for i, polyCoeffs := range Delta {
 		DeltaCoeffsBigInt[i] = make([]*big.Int, r.N())
 		r.PolyToBigint(polyCoeffs, 1, DeltaCoeffsBigInt[i])
 	}
